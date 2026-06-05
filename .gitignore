@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+
+# Wails generated/runtime cache
+frontend/
+
+# Local app data/cache
+.jczhl-filyme/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS/editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# Temporary/hash files
+*.md5
+package.json.md5
+
+# Go
+*.test
+coverage.out

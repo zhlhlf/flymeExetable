@@ -1,0 +1,76 @@
+name: Windows Release
+
+on:
+  push:
+  workflow_dispatch:
+
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.23.x'
+        cache: true
+
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: 10
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: pnpm
+
+    - name: Install frontend dependencies
+      run: pnpm install --frozen-lockfile
+
+    - name: Install Wails CLI
+      run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+    - name: Build Wails app
+      run: wails build
+
+    - name: Prepare release tag
+      id: vars
+      shell: pwsh
+      run: |
+        $tag = "${{ github.sha }}".Substring(0, 8)
+        "tag=$tag" >> $env:GITHUB_OUTPUT
+        "exe=build/bin/jczhl-filyme-launcher.exe" >> $env:GITHUB_OUTPUT
+
+    - name: Create or update git tag
+      shell: pwsh
+      run: |
+        $tag = "${{ steps.vars.outputs.tag }}"
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        if (git rev-parse "$tag" 2>$null) {
+          git tag -f "$tag" "${{ github.sha }}"
+        } else {
+          git tag "$tag" "${{ github.sha }}"
+        }
+        git push origin "refs/tags/$tag" --force
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ steps.vars.outputs.tag }}
+        name: ${{ steps.vars.outputs.tag }}
+        target_commitish: ${{ github.sha }}
+        files: ${{ steps.vars.outputs.exe }}
+        make_latest: true
+        generate_release_notes: true

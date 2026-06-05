@@ -1,0 +1,21 @@
+{
+  "name": "jczhl-flyme-launcher",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vue-tsc && vite build",
+    "wails:dev": "%USERPROFILE%\\go\\bin\\wails.exe dev",
+    "wails:build": "%USERPROFILE%\\go\\bin\\wails.exe build"
+  },
+  "dependencies": {
+    "vue": "latest"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "latest",
+    "typescript": "latest",
+    "vite": "latest",
+    "vue-tsc": "latest"
+  }
+}
