@@ -31,6 +31,7 @@ button {
   width: 100vw;
   height: 100vh;
   padding: 0;
+  border-radius: 32px;
   overflow: hidden;
   --wails-draggable: drag;
   background:
@@ -507,6 +508,7 @@ button:disabled {
 }
 
 .fly-item strong {
+  color: #9fdcff;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -539,7 +541,10 @@ button:disabled {
 }
 
 .footer-poem {
+  padding: 0;
+  background: transparent;
   color: #ff8a00;
+  cursor: pointer;
   font-family: "STKaiti", "KaiTi", "FangSong", "Microsoft YaHei UI", serif;
   font-size: 13px;
   font-weight: 400;
@@ -552,4 +557,5 @@ button:disabled {
 
 .shell.is-expanded .expanded-footer {
   opacity: 1;
+  pointer-events: auto;
 }

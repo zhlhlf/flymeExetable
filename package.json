@@ -7,7 +7,7 @@
     "dev": "vite --host 127.0.0.1",
     "build": "vue-tsc && vite build",
     "wails:dev": "%USERPROFILE%\\go\\bin\\wails.exe dev",
-    "wails:build": "%USERPROFILE%\\go\\bin\\wails.exe build"
+    "wails:build": "node scripts/prepare-wails-icon.mjs && %USERPROFILE%\\go\\bin\\wails.exe build"
   },
   "dependencies": {
     "vue": "latest"

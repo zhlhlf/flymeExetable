@@ -30,9 +30,9 @@ func main() {
 		Windows: &windows.Options{
 			WebviewIsTransparent:              true,
 			WindowIsTranslucent:               true,
-			BackdropType:                      windows.Acrylic,
+			BackdropType:                      windows.None,
 			Theme:                             windows.Dark,
-			DisableFramelessWindowDecorations: false,
+			DisableFramelessWindowDecorations: true,
 			DisableWindowIcon:                 true,
 		},
 		OnStartup: app.startup,

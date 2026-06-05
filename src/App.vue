@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { WindowGetPosition, WindowSetPosition, WindowSetSize } from '../wailsjs/runtime/runtime'
+import { Quit, WindowGetPosition, WindowSetPosition, WindowSetSize } from '../wailsjs/runtime/runtime'
 import { ChooseFolder, GetConfig, GetIcon, OpenItem, SaveWindowPosition, ScanFolders, SetFolders } from '../wailsjs/go/main/App'
 
 type AppConfig = {
@@ -37,6 +37,8 @@ const dockFocused = ref(false)
 const choosingFolder = ref(false)
 let savePositionTimer = 0
 let collapseTimer = 0
+let collapsedPosition: { x: number, y: number } | null = null
+let expanding = false
 
 const collapsedWidth = 58
 const expandedWidth = 420
@@ -68,6 +70,7 @@ onMounted(async () => {
     currentWindowHeight = getCollapsedHeight()
     WindowSetSize(collapsedWidth, currentWindowHeight)
     if (config.windowPosition) {
+      collapsedPosition = { x: config.windowPosition.x, y: config.windowPosition.y }
       WindowSetPosition(config.windowPosition.x, config.windowPosition.y)
     }
     startPositionRecorder()
@@ -102,6 +105,7 @@ function startPositionRecorder() {
     try {
       if (expanded.value) return
       const pos = await WindowGetPosition()
+      collapsedPosition = { x: pos.x, y: pos.y }
       const key = `${pos.x},${pos.y}`
       if (key === last) return
       last = key
@@ -234,17 +238,26 @@ function getCollapsedHeight() {
 
 async function expandWindow(width = expandedWidth) {
   if (collapseTimer) window.clearTimeout(collapseTimer)
+  if (expanding) return
+  expanding = true
   try {
-    const pos = await WindowGetPosition()
-    const fromWidth = expanded.value ? currentExpandedWidth : collapsedWidth
-    const fromHeight = expanded.value ? currentWindowHeight : getCollapsedHeight()
-    WindowSetPosition(pos.x - (width - fromWidth), pos.y - Math.round((expandedHeight - fromHeight) / 2))
+    if (!expanded.value) {
+      collapsedPosition = await WindowGetPosition()
+    }
+    const anchor = collapsedPosition ?? await WindowGetPosition()
+    const collapsedHeight = getCollapsedHeight()
+    const rightEdge = anchor.x + collapsedWidth
+    const expandedX = rightEdge - width
+    const expandedY = anchor.y - Math.round((expandedHeight - collapsedHeight) / 2)
     WindowSetSize(width, expandedHeight)
+    WindowSetPosition(expandedX, expandedY)
     currentExpandedWidth = width
     currentWindowHeight = expandedHeight
     expanded.value = true
   } catch {
     // 忽略窗口扩展失败。
+  } finally {
+    expanding = false
   }
 }
 
@@ -262,16 +275,16 @@ function scheduleCollapse() {
   collapseTimer = window.setTimeout(async () => {
     if (!expanded.value) return
     try {
-      const pos = await WindowGetPosition()
+      const anchor = collapsedPosition ?? await WindowGetPosition()
       const collapsedHeight = getCollapsedHeight()
-      const collapsedX = pos.x + (currentExpandedWidth - collapsedWidth)
-      const collapsedY = pos.y + Math.round((currentWindowHeight - collapsedHeight) / 2)
+      const rightEdge = anchor.x + collapsedWidth
       WindowSetSize(collapsedWidth, collapsedHeight)
-      WindowSetPosition(collapsedX, collapsedY)
+      WindowSetPosition(rightEdge - collapsedWidth, anchor.y)
       expanded.value = false
       currentExpandedWidth = collapsedWidth
       currentWindowHeight = collapsedHeight
-      await SaveWindowPosition(collapsedX, collapsedY)
+      collapsedPosition = { x: anchor.x, y: anchor.y }
+      await SaveWindowPosition(anchor.x, anchor.y)
     } catch {
       expanded.value = false
       currentExpandedWidth = collapsedWidth
@@ -288,6 +301,10 @@ function iconOf(item: LauncherItem) {
   if (ext === 'url') return '🌐'
   if (['bat', 'cmd', 'ps1'].includes(ext)) return '⌘'
   return '✨'
+}
+
+function quitApp() {
+  Quit()
 }
 </script>
 
@@ -344,7 +361,7 @@ function iconOf(item: LauncherItem) {
 
       <div class="expanded-footer">
         <div class="footer-name">zhlhlf</div>
-        <div class="footer-poem">去年海棠玉殿惊 长袖当凤凰行</div>
+        <button class="footer-poem" title="退出应用" @click="quitApp">去年海棠玉殿惊 长袖当凤凰行</button>
       </div>
     </template>
   </main>
