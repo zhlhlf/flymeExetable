@@ -15,6 +15,7 @@ import (
 	"strings"
 	"syscall"
 	"unicode"
+	"unsafe"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.org/x/text/encoding/simplifiedchinese"
@@ -448,7 +449,75 @@ func (a *App) OpenItem(path string) error {
 	if runtime.GOOS != "windows" {
 		return errors.New("only windows is supported")
 	}
-	cmd := exec.Command("cmd", "/C", "start", "", path)
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	return cmd.Start()
+	return shellOpenWindows(path)
+}
+
+func shellOpenWindows(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return errors.New("路径为空")
+	}
+
+	ret, err := shellExecuteWindows("open", path, "", "")
+	if err != nil {
+		return err
+	}
+	if ret > 32 {
+		return nil
+	}
+
+	if strings.EqualFold(filepath.Ext(path), ".lnk") {
+		explorerRet, explorerErr := shellExecuteWindows("open", "explorer.exe", path, "")
+		if explorerErr == nil {
+			if explorerRet > 32 {
+				return nil
+			}
+		}
+
+		runasRet, runasErr := shellExecuteWindows("runas", path, "", "")
+		if runasErr == nil {
+			if runasRet > 32 {
+				return nil
+			}
+			ret = runasRet
+		}
+	}
+
+	return fmt.Errorf("打开失败：%s（ShellExecute 错误码 %d）", path, ret)
+}
+
+func shellExecuteWindows(operation string, file string, parameters string, directory string) (uintptr, error) {
+	shell32 := syscall.NewLazyDLL("shell32.dll")
+	shellExecute := shell32.NewProc("ShellExecuteW")
+	operationPtr, err := syscall.UTF16PtrFromString(operation)
+	if err != nil {
+		return 0, err
+	}
+	filePtr, err := syscall.UTF16PtrFromString(file)
+	if err != nil {
+		return 0, err
+	}
+	var parametersPtr *uint16
+	if parameters != "" {
+		parametersPtr, err = syscall.UTF16PtrFromString(parameters)
+		if err != nil {
+			return 0, err
+		}
+	}
+	var directoryPtr *uint16
+	if directory != "" {
+		directoryPtr, err = syscall.UTF16PtrFromString(directory)
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	ret, _, _ := shellExecute.Call(
+		0,
+		uintptr(unsafe.Pointer(operationPtr)),
+		uintptr(unsafe.Pointer(filePtr)),
+		uintptr(unsafe.Pointer(parametersPtr)),
+		uintptr(unsafe.Pointer(directoryPtr)),
+		uintptr(1),
+	)
+	return ret, nil
 }
