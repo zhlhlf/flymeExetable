@@ -35,7 +35,6 @@ const activeY = ref(Math.round(window.innerHeight / 2))
 const expanded = ref(false)
 const dockFocused = ref(false)
 const choosingFolder = ref(false)
-let savePositionTimer = 0
 let collapseTimer = 0
 let collapsedPosition: { x: number, y: number } | null = null
 let expanding = false
@@ -73,7 +72,6 @@ onMounted(async () => {
       collapsedPosition = { x: config.windowPosition.x, y: config.windowPosition.y }
       WindowSetPosition(config.windowPosition.x, config.windowPosition.y)
     }
-    startPositionRecorder()
     folders.value = normalizeFolderList(config.folders?.length ? config.folders : (config.folder ? [config.folder] : []))
     settingsFolders.value = [...folders.value]
     if (folders.value.length > 0) {
@@ -94,27 +92,8 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  if (savePositionTimer) window.clearInterval(savePositionTimer)
   if (collapseTimer) window.clearTimeout(collapseTimer)
 })
-
-function startPositionRecorder() {
-  if (savePositionTimer) return
-  let last = ''
-  savePositionTimer = window.setInterval(async () => {
-    try {
-      if (expanded.value) return
-      const pos = await WindowGetPosition()
-      collapsedPosition = { x: pos.x, y: pos.y }
-      const key = `${pos.x},${pos.y}`
-      if (key === last) return
-      last = key
-      await SaveWindowPosition(pos.x, pos.y)
-    } catch {
-      // 忽略位置保存失败，避免影响启动器使用。
-    }
-  }, 1200)
-}
 
 async function chooseFolder() {
   cancelCollapse()

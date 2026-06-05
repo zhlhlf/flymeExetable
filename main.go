@@ -2,6 +2,7 @@ package main
 
 import (
 	"embed"
+	"path/filepath"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -14,6 +15,10 @@ var assets embed.FS
 
 func main() {
 	app := NewApp()
+	webviewDataPath := ""
+	if dir, err := storeDir(); err == nil {
+		webviewDataPath = filepath.Join(dir, "webview")
+	}
 
 	err := wails.Run(&options.App{
 		Title:            "jczhl Filyme Launcher",
@@ -34,6 +39,8 @@ func main() {
 			Theme:                             windows.Dark,
 			DisableFramelessWindowDecorations: true,
 			DisableWindowIcon:                 true,
+			WebviewUserDataPath:               webviewDataPath,
+			WebviewGpuIsDisabled:              true,
 		},
 		OnStartup: app.startup,
 		Bind: []interface{}{
