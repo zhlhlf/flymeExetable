@@ -164,6 +164,7 @@ async function openItemOnHover(item: LauncherItem) {
 }
 
 function onLetterEnter(letter: string, event: MouseEvent) {
+  cancelCollapse()
   dockFocused.value = true
   activeLetter.value = letter
   const target = event.currentTarget as HTMLElement
@@ -193,9 +194,16 @@ async function expandWindow(width = expandedWidth) {
   }
 }
 
+function cancelCollapse() {
+  if (collapseTimer) {
+    window.clearTimeout(collapseTimer)
+    collapseTimer = 0
+  }
+}
+
 function scheduleCollapse() {
   dockFocused.value = false
-  if (collapseTimer) window.clearTimeout(collapseTimer)
+  cancelCollapse()
   collapseTimer = window.setTimeout(async () => {
     if (!expanded.value) return
     try {
@@ -214,7 +222,7 @@ function scheduleCollapse() {
       currentExpandedWidth = collapsedWidth
       currentWindowHeight = getCollapsedHeight()
     }
-  }, 220)
+  }, 520)
 }
 
 function iconOf(item: LauncherItem) {
@@ -229,7 +237,7 @@ function iconOf(item: LauncherItem) {
 </script>
 
 <template>
-  <main class="shell" @mouseleave="scheduleCollapse">
+  <main class="shell" :class="{ 'is-expanded': expanded }" @mouseenter="cancelCollapse" @mouseleave="scheduleCollapse">
     <section v-if="booting" class="empty glass-card booting">正在读取本地配置...</section>
 
     <section v-else-if="!folder" class="setup glass-card">
@@ -240,7 +248,7 @@ function iconOf(item: LauncherItem) {
     </section>
 
     <template v-else>
-      <aside class="alphabet-dock" aria-label="字母表">
+      <aside class="alphabet-dock" aria-label="字母表" @mouseenter="cancelCollapse">
         <button class="refresh-dot" :disabled="loading" title="刷新" @click="refresh">↻</button>
         <button
           v-for="letter in visibleLetters"
@@ -254,7 +262,7 @@ function iconOf(item: LauncherItem) {
         </button>
       </aside>
 
-      <div class="fly-panel glass-card" :style="{ top: `${activeY}px` }">
+      <div class="fly-panel glass-card" :style="{ top: `${activeY}px` }" @mouseenter="cancelCollapse">
         <div class="fly-head">
           <b>{{ activeLetter }}</b>
           <span>{{ loading ? '刷新中' : `${activeItems.length}/${totalItems}` }}</span>

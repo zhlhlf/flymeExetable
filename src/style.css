@@ -370,6 +370,7 @@ button:disabled {
 .fly-panel::-webkit-scrollbar { width: 6px; }
 .fly-panel::-webkit-scrollbar-thumb { border-radius: 999px; background: rgba(255, 167, 73, .36); }
 
+.shell.is-expanded .fly-panel,
 .alphabet-dock:hover + .fly-panel,
 .fly-panel:hover {
   opacity: 1;
