@@ -16,6 +16,7 @@ export namespace main {
 	}
 	export class AppConfig {
 	    folder?: string;
+	    folders: string[];
 	    windowPosition?: WindowPosition;
 	
 	    static createFrom(source: any = {}) {
@@ -25,6 +26,7 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.folder = source["folder"];
+	        this.folders = source["folders"];
 	        this.windowPosition = this.convertValues(source["windowPosition"], WindowPosition);
 	    }
 	

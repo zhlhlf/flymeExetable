@@ -14,4 +14,8 @@ export function SaveWindowPosition(arg1:number,arg2:number):Promise<void>;
 
 export function ScanFolder(arg1:string):Promise<Array<main.LauncherItem>>;
 
+export function ScanFolders(arg1:Array<string>):Promise<Array<main.LauncherItem>>;
+
 export function SetFolder(arg1:string):Promise<main.AppConfig>;
+
+export function SetFolders(arg1:Array<string>):Promise<main.AppConfig>;

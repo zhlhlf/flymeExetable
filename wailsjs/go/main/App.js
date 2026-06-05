@@ -26,6 +26,14 @@ export function ScanFolder(arg1) {
   return window['go']['main']['App']['ScanFolder'](arg1);
 }
 
+export function ScanFolders(arg1) {
+  return window['go']['main']['App']['ScanFolders'](arg1);
+}
+
 export function SetFolder(arg1) {
   return window['go']['main']['App']['SetFolder'](arg1);
+}
+
+export function SetFolders(arg1) {
+  return window['go']['main']['App']['SetFolders'](arg1);
 }

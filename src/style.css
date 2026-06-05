@@ -158,6 +158,56 @@ button:disabled {
   line-height: 1.8;
 }
 
+.settings-list {
+  width: min(520px, calc(100vw - 56px));
+  max-height: 280px;
+  margin: 12px 0 18px;
+  overflow: auto;
+}
+
+.settings-list::-webkit-scrollbar { width: 6px; }
+.settings-list::-webkit-scrollbar-thumb { border-radius: 999px; background: rgba(255, 167, 73, .36); }
+
+.settings-empty,
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 184, 106, .14);
+  border-radius: 18px;
+  background: rgba(255, 132, 0, .12);
+  color: rgba(255, 154, 34, .92);
+  text-align: left;
+}
+
+.settings-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-row button {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: rgba(255, 138, 0, .16);
+  cursor: pointer;
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.settings-actions {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+}
+
 .big { height: 52px; padding: 0 28px; }
 
 .launcher-head {
@@ -291,7 +341,7 @@ button:disabled {
 .alphabet-dock {
   position: fixed;
   z-index: 6;
-  top: 50%;
+  top: 8px;
   right: 6px;
   display: flex;
   flex-direction: column;
@@ -301,10 +351,10 @@ button:disabled {
   padding: 0;
   background: transparent;
   box-shadow: none;
-  transform: translateY(-50%);
   --wails-draggable: no-drag;
 }
 
+.settings-dot,
 .refresh-dot {
   display: grid;
   place-items: center;
@@ -323,8 +373,18 @@ button:disabled {
   transition: transform .14s ease, background .14s ease;
 }
 
+.settings-dot {
+  margin-bottom: 6px;
+  font-size: 15px;
+}
+
+.settings-dot:hover,
 .refresh-dot:hover {
   background: rgba(255, 138, 0, .22);
+  transform: scale(1.08);
+}
+
+.refresh-dot:hover {
   transform: rotate(28deg) scale(1.08);
 }
 
@@ -356,7 +416,7 @@ button:disabled {
   z-index: 5;
   right: 44px;
   width: 330px;
-  max-height: 236px;
+  max-height: 318px;
   padding: 12px;
   overflow-y: auto;
   overflow-x: hidden;

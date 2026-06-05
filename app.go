@@ -17,6 +17,7 @@ import (
 	"unicode"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 type App struct {
@@ -25,6 +26,7 @@ type App struct {
 
 type AppConfig struct {
 	Folder         *string         `json:"folder"`
+	Folders        []string        `json:"folders"`
 	WindowPosition *WindowPosition `json:"windowPosition"`
 }
 
@@ -85,7 +87,7 @@ func iconsDir() (string, error) {
 }
 
 func defaultConfig() AppConfig {
-	return AppConfig{Folder: nil, WindowPosition: nil}
+	return AppConfig{Folder: nil, Folders: []string{}, WindowPosition: nil}
 }
 
 func readConfig() (AppConfig, error) {
@@ -108,6 +110,9 @@ func readConfig() (AppConfig, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return defaultConfig(), nil
 	}
+	if len(cfg.Folders) == 0 && cfg.Folder != nil && *cfg.Folder != "" {
+		cfg.Folders = []string{*cfg.Folder}
+	}
 	return cfg, nil
 }
 
@@ -125,11 +130,52 @@ func writeConfig(cfg AppConfig) error {
 
 func firstLetter(name string) string {
 	for _, r := range name {
-		if r <= unicode.MaxASCII && unicode.IsLetter(r) {
-			return strings.ToUpper(string(r))
+		if unicode.IsSpace(r) {
+			continue
 		}
+		if r <= unicode.MaxASCII {
+			if unicode.IsLetter(r) {
+				return strings.ToUpper(string(r))
+			}
+			return "#"
+		}
+		if initial, ok := chinesePinyinInitial(r); ok {
+			return initial
+		}
+		return "#"
 	}
 	return "#"
+}
+
+func chinesePinyinInitial(r rune) (string, bool) {
+	if r < '\u4e00' || r > '\u9fff' {
+		return "", false
+	}
+
+	encoded, err := simplifiedchinese.GBK.NewEncoder().String(string(r))
+	if err != nil || len(encoded) < 2 {
+		return "#", true
+	}
+
+	code := int(encoded[0])<<8 + int(encoded[1])
+	ranges := []struct {
+		start   int
+		initial string
+	}{
+		{0xB0A1, "A"}, {0xB0C5, "B"}, {0xB2C1, "C"}, {0xB4EE, "D"},
+		{0xB6EA, "E"}, {0xB7A2, "F"}, {0xB8C1, "G"}, {0xB9FE, "H"},
+		{0xBBF7, "J"}, {0xBFA6, "K"}, {0xC0AC, "L"}, {0xC2E8, "M"},
+		{0xC4C3, "N"}, {0xC5B6, "O"}, {0xC5BE, "P"}, {0xC6DA, "Q"},
+		{0xC8BB, "R"}, {0xC8F6, "S"}, {0xCBFA, "T"}, {0xCDDA, "W"},
+		{0xCEF4, "X"}, {0xD1B9, "Y"}, {0xD4D1, "Z"},
+	}
+
+	for i := len(ranges) - 1; i >= 0; i-- {
+		if code >= ranges[i].start {
+			return ranges[i].initial, true
+		}
+	}
+	return "#", true
 }
 
 func displayName(path string, info os.FileInfo) string {
@@ -165,27 +211,36 @@ func scanFolder(folder string) ([]LauncherItem, error) {
 	}
 
 	items := make([]LauncherItem, 0, 128)
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, entry := range entries {
-		path := filepath.Join(root, entry.Name())
-		info, err := entry.Info()
-		if err != nil || !shouldCollect(path, info) {
+	seenPaths := make(map[string]bool)
+	for _, scanRoot := range scanRoots(root) {
+		entries, err := os.ReadDir(scanRoot)
+		if err != nil {
 			continue
 		}
 
-		name := displayName(path, info)
-		items = append(items, LauncherItem{
-			Name:      name,
-			Path:      path,
-			Letter:    firstLetter(name),
-			Extension: strings.TrimPrefix(filepath.Ext(path), "."),
-			IsDir:     info.IsDir(),
-			Icon:      "",
-		})
+		for _, entry := range entries {
+			path := filepath.Join(scanRoot, entry.Name())
+			pathKey := strings.ToLower(filepath.Clean(path))
+			if seenPaths[pathKey] {
+				continue
+			}
+			seenPaths[pathKey] = true
+
+			info, err := entry.Info()
+			if err != nil || !shouldCollect(path, info) {
+				continue
+			}
+
+			name := displayName(path, info)
+			items = append(items, LauncherItem{
+				Name:      name,
+				Path:      path,
+				Letter:    firstLetter(name),
+				Extension: strings.TrimPrefix(filepath.Ext(path), "."),
+				IsDir:     info.IsDir(),
+				Icon:      "",
+			})
+		}
 	}
 
 	sort.SliceStable(items, func(i, j int) bool {
@@ -203,6 +258,64 @@ func scanFolder(folder string) ([]LauncherItem, error) {
 	}
 
 	return items, nil
+}
+
+func scanFolders(folders []string) ([]LauncherItem, error) {
+	allItems := make([]LauncherItem, 0, 256)
+	seenPaths := make(map[string]bool)
+
+	for _, folder := range folders {
+		folder = strings.TrimSpace(folder)
+		if folder == "" {
+			continue
+		}
+		items, err := scanFolder(folder)
+		if err != nil {
+			continue
+		}
+		for _, item := range items {
+			key := strings.ToLower(filepath.Clean(item.Path))
+			if seenPaths[key] {
+				continue
+			}
+			seenPaths[key] = true
+			allItems = append(allItems, item)
+		}
+	}
+
+	sort.SliceStable(allItems, func(i, j int) bool {
+		if allItems[i].Letter == allItems[j].Letter {
+			return strings.ToLower(allItems[i].Name) < strings.ToLower(allItems[j].Name)
+		}
+		return allItems[i].Letter < allItems[j].Letter
+	})
+
+	cache, err := itemsCachePath()
+	if err == nil {
+		if data, err := json.MarshalIndent(allItems, "", "  "); err == nil {
+			_ = os.WriteFile(cache, data, 0644)
+		}
+	}
+
+	return allItems, nil
+}
+
+func scanRoots(root string) []string {
+	roots := []string{root}
+	home, _ := os.UserHomeDir()
+	public := os.Getenv("PUBLIC")
+	userDesktop := filepath.Clean(filepath.Join(home, "Desktop"))
+	publicDesktop := filepath.Clean(filepath.Join(public, "Desktop"))
+
+	// Windows 资源管理器里的“桌面”会合并用户桌面和公共桌面。
+	// 例如 OpenVPN GUI.lnk 常见位置是 C:\Users\Public\Desktop。
+	if public != "" && strings.EqualFold(filepath.Clean(root), userDesktop) {
+		if info, err := os.Stat(publicDesktop); err == nil && info.IsDir() {
+			roots = append(roots, publicDesktop)
+		}
+	}
+
+	return roots
 }
 
 func iconCachePath(path string) (string, error) {
@@ -262,17 +375,24 @@ func (a *App) ChooseFolder() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if selected == "" {
-		return "", nil
-	}
-	cfg, _ := readConfig()
-	cfg.Folder = &selected
-	return selected, writeConfig(cfg)
+	return selected, nil
 }
 
 func (a *App) SetFolder(folder string) (AppConfig, error) {
 	cfg, _ := readConfig()
 	cfg.Folder = &folder
+	cfg.Folders = []string{folder}
+	return cfg, writeConfig(cfg)
+}
+
+func (a *App) SetFolders(folders []string) (AppConfig, error) {
+	cleaned := normalizeFolders(folders)
+	cfg, _ := readConfig()
+	cfg.Folders = cleaned
+	cfg.Folder = nil
+	if len(cleaned) > 0 {
+		cfg.Folder = &cleaned[0]
+	}
 	return cfg, writeConfig(cfg)
 }
 
@@ -287,6 +407,34 @@ func (a *App) SaveWindowPosition(x int, y int) error {
 
 func (a *App) ScanFolder(folder string) ([]LauncherItem, error) {
 	return scanFolder(folder)
+}
+
+func (a *App) ScanFolders(folders []string) ([]LauncherItem, error) {
+	return scanFolders(folders)
+}
+
+func normalizeFolders(folders []string) []string {
+	result := make([]string, 0, len(folders))
+	seen := make(map[string]bool)
+	for _, folder := range folders {
+		folder = strings.TrimSpace(folder)
+		if folder == "" {
+			continue
+		}
+		abs, err := filepath.Abs(folder)
+		if err != nil {
+			abs = folder
+		}
+		key := strings.ToLower(filepath.Clean(abs))
+		if seen[key] {
+			continue
+		}
+		if info, err := os.Stat(abs); err == nil && info.IsDir() {
+			seen[key] = true
+			result = append(result, abs)
+		}
+	}
+	return result
 }
 
 func (a *App) GetIcon(path string) (string, error) {

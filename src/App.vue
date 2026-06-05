@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { WindowGetPosition, WindowSetPosition, WindowSetSize } from '../wailsjs/runtime/runtime'
-import { ChooseFolder, GetConfig, GetIcon, OpenItem, SaveWindowPosition, ScanFolder } from '../wailsjs/go/main/App'
+import { ChooseFolder, GetConfig, GetIcon, OpenItem, SaveWindowPosition, ScanFolders, SetFolders } from '../wailsjs/go/main/App'
 
 type AppConfig = {
   folder: string | null
+  folders?: string[]
   windowPosition?: {
     x: number
     y: number
@@ -20,13 +21,15 @@ type LauncherItem = {
   icon: string
 }
 
-const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')
-const folder = ref<string>('')
+const letters = ['#', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')]
+const folders = ref<string[]>([])
+const settingsFolders = ref<string[]>([])
 const items = ref<LauncherItem[]>([])
 const activeLetter = ref('A')
 const loading = ref(false)
 const error = ref('')
 const booting = ref(true)
+const showSettings = ref(false)
 const hoverOpenedPath = ref('')
 const activeY = ref(Math.round(window.innerHeight / 2))
 const expanded = ref(false)
@@ -36,7 +39,7 @@ let collapseTimer = 0
 
 const collapsedWidth = 58
 const expandedWidth = 420
-const expandedHeight = 680
+const expandedHeight = 820
 let currentExpandedWidth = collapsedWidth
 let currentWindowHeight = 86
 
@@ -56,6 +59,7 @@ const grouped = computed(() => {
 const activeItems = computed(() => grouped.value.get(activeLetter.value) ?? [])
 const totalItems = computed(() => items.value.length)
 const visibleLetters = computed(() => letters.filter((letter) => (grouped.value.get(letter)?.length ?? 0) > 0))
+const hasFolders = computed(() => folders.value.length > 0)
 
 onMounted(async () => {
   try {
@@ -66,12 +70,14 @@ onMounted(async () => {
       WindowSetPosition(config.windowPosition.x, config.windowPosition.y)
     }
     startPositionRecorder()
-    if (config.folder) {
-      folder.value = config.folder
+    folders.value = normalizeFolderList(config.folders?.length ? config.folders : (config.folder ? [config.folder] : []))
+    settingsFolders.value = [...folders.value]
+    if (folders.value.length > 0) {
       booting.value = false
       await refresh()
       return
     }
+    showSettings.value = true
     currentExpandedWidth = expandedWidth
     currentWindowHeight = expandedHeight
     WindowSetSize(currentExpandedWidth, currentWindowHeight)
@@ -110,18 +116,16 @@ async function chooseFolder() {
   const selected = await ChooseFolder()
   if (!selected) return
 
-  folder.value = selected
-  await refresh()
-  scheduleCollapse()
+  settingsFolders.value = normalizeFolderList([...settingsFolders.value, selected])
 }
 
 async function refresh() {
-  if (!folder.value) return
+  if (!folders.value.length) return
 
   loading.value = true
   error.value = ''
   try {
-    items.value = await ScanFolder(folder.value) as LauncherItem[]
+    items.value = await ScanFolders(folders.value) as LauncherItem[]
     const firstAvailable = visibleLetters.value[0]
     activeLetter.value = firstAvailable ?? 'A'
     if (!expanded.value) {
@@ -134,6 +138,41 @@ async function refresh() {
   } finally {
     loading.value = false
   }
+}
+
+function normalizeFolderList(source: string[]) {
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const folder of source) {
+    const value = folder.trim()
+    if (!value) continue
+    const key = value.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    result.push(value)
+  }
+  return result
+}
+
+async function openSettings() {
+  await expandWindow()
+  cancelCollapse()
+  settingsFolders.value = [...folders.value]
+  showSettings.value = true
+}
+
+function removeSettingsFolder(index: number) {
+  settingsFolders.value = settingsFolders.value.filter((_, currentIndex) => currentIndex !== index)
+}
+
+async function confirmSettings() {
+  const nextFolders = normalizeFolderList(settingsFolders.value)
+  const config = await SetFolders(nextFolders)
+  folders.value = normalizeFolderList(config.folders?.length ? config.folders : nextFolders)
+  settingsFolders.value = [...folders.value]
+  showSettings.value = false
+  await refresh()
+  scheduleCollapse()
 }
 
 async function loadIcons(sourceItems: LauncherItem[]) {
@@ -240,15 +279,26 @@ function iconOf(item: LauncherItem) {
   <main class="shell" :class="{ 'is-expanded': expanded }" @mouseenter="cancelCollapse" @mouseleave="scheduleCollapse">
     <section v-if="booting" class="empty glass-card booting">正在读取本地配置...</section>
 
-    <section v-else-if="!folder" class="setup glass-card">
+    <section v-else-if="showSettings || !hasFolders" class="setup glass-card">
       <div class="setup-orb">A-Z</div>
-      <h2>首次运行需要指定文件夹</h2>
-      <p>后续会直接读取 <code>~/.jczhl-filyme</code> 中保存的配置，不再弹出选择。</p>
-      <button class="primary big" @click="chooseFolder">选择文件夹并开始</button>
+      <h2>{{ hasFolders ? '启动器设置' : '首次运行需要指定文件夹' }}</h2>
+      <p>可以添加多个目录，程序会合并扫描这些目录的当前层内容。</p>
+      <div class="settings-list">
+        <div v-if="!settingsFolders.length" class="settings-empty">还没有选择目录</div>
+        <div v-for="(settingFolder, index) in settingsFolders" :key="settingFolder" class="settings-row">
+          <span>{{ settingFolder }}</span>
+          <button @click="removeSettingsFolder(index)">×</button>
+        </div>
+      </div>
+      <div class="settings-actions">
+        <button class="ghost big" @click="chooseFolder">添加目录</button>
+        <button class="primary big" :disabled="!settingsFolders.length" @click="confirmSettings">确认</button>
+      </div>
     </section>
 
     <template v-else>
       <aside class="alphabet-dock" aria-label="字母表" @mouseenter="cancelCollapse">
+        <button class="settings-dot" title="设置" @click="openSettings">⚙</button>
         <button class="refresh-dot" :disabled="loading" title="刷新" @click="refresh">↻</button>
         <button
           v-for="letter in visibleLetters"
@@ -263,10 +313,6 @@ function iconOf(item: LauncherItem) {
       </aside>
 
       <div class="fly-panel glass-card" :style="{ top: `${activeY}px` }" @mouseenter="cancelCollapse">
-        <div class="fly-head">
-          <b>{{ activeLetter }}</b>
-          <span>{{ loading ? '刷新中' : `${activeItems.length}/${totalItems}` }}</span>
-        </div>
         <div v-if="error" class="fly-empty">{{ error }}</div>
         <div v-else-if="!activeItems.length" class="fly-empty">暂无</div>
         <template v-else>
