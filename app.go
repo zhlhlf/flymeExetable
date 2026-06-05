@@ -334,7 +334,8 @@ func iconDataURL(path string) string {
 		return ""
 	}
 
-	if _, err := os.Stat(cache); err != nil {
+	if info, err := os.Stat(cache); err != nil || info.Size() == 0 {
+		_ = os.Remove(cache)
 		if err := extractWindowsIcon(path, cache); err != nil {
 			return ""
 		}
@@ -353,15 +354,22 @@ func extractWindowsIcon(sourcePath string, outputPath string) error {
 	}
 
 	ps := `Add-Type -AssemblyName System.Drawing; ` +
-		`$p = $args[0]; $o = $args[1]; ` +
+		`$p = $env:JCZHL_ICON_SOURCE; $o = $env:JCZHL_ICON_OUTPUT; ` +
 		`$icon = [System.Drawing.Icon]::ExtractAssociatedIcon($p); ` +
 		`if ($null -eq $icon) { exit 2 }; ` +
 		`$bmp = $icon.ToBitmap(); ` +
 		`$bmp.Save($o, [System.Drawing.Imaging.ImageFormat]::Png); ` +
 		`$bmp.Dispose(); $icon.Dispose();`
 
-	cmd := exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps, sourcePath, outputPath)
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-Command", ps)
+	cmd.Env = append(os.Environ(),
+		"JCZHL_ICON_SOURCE="+sourcePath,
+		"JCZHL_ICON_OUTPUT="+outputPath,
+	)
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow:    true,
+		CreationFlags: 0x08000000, // CREATE_NO_WINDOW
+	}
 	return cmd.Run()
 }
 
