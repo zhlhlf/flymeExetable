@@ -34,6 +34,7 @@ const hoverOpenedPath = ref('')
 const activeY = ref(Math.round(window.innerHeight / 2))
 const expanded = ref(false)
 const dockFocused = ref(false)
+const choosingFolder = ref(false)
 let savePositionTimer = 0
 let collapseTimer = 0
 
@@ -112,11 +113,25 @@ function startPositionRecorder() {
 }
 
 async function chooseFolder() {
+  cancelCollapse()
+  showSettings.value = true
   await expandWindow()
-  const selected = await ChooseFolder()
-  if (!selected) return
+  choosingFolder.value = true
+  try {
+    const selected = await ChooseFolder()
+    await expandWindow()
+    if (!selected) return
 
-  settingsFolders.value = normalizeFolderList([...settingsFolders.value, selected])
+    const nextFolders = normalizeFolderList([...settingsFolders.value, selected])
+    const config = await SetFolders(nextFolders)
+    folders.value = normalizeFolderList(config.folders?.length ? config.folders : nextFolders)
+    settingsFolders.value = [...folders.value]
+    if (folders.value.length > 0) await refresh()
+  } finally {
+    choosingFolder.value = false
+    await expandWindow()
+    cancelCollapse()
+  }
 }
 
 async function refresh() {
@@ -241,6 +256,7 @@ function cancelCollapse() {
 }
 
 function scheduleCollapse() {
+  if (showSettings.value || choosingFolder.value) return
   dockFocused.value = false
   cancelCollapse()
   collapseTimer = window.setTimeout(async () => {
@@ -324,6 +340,11 @@ function iconOf(item: LauncherItem) {
             <strong>{{ item.name }}</strong>
           </button>
         </template>
+      </div>
+
+      <div class="expanded-footer">
+        <div class="footer-name">zhlhlf</div>
+        <div class="footer-poem">去年海棠玉殿惊 长袖当凤凰行</div>
       </div>
     </template>
   </main>

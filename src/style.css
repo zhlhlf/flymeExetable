@@ -132,6 +132,13 @@ button:disabled {
   text-align: center;
 }
 
+.setup.glass-card {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 .setup-orb {
   display: grid;
   place-items: center;
@@ -160,7 +167,7 @@ button:disabled {
 
 .settings-list {
   width: min(520px, calc(100vw - 56px));
-  max-height: 280px;
+  max-height: 216px;
   margin: 12px 0 18px;
   overflow: auto;
 }
@@ -504,4 +511,45 @@ button:disabled {
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 250px;
+}
+
+.expanded-footer {
+  position: fixed;
+  left: 50%;
+  bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  transform: translateX(-50%) skewX(-12deg);
+  z-index: 7;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .16s ease;
+  --wails-draggable: no-drag;
+}
+
+.footer-name {
+  color: #8fd8ff;
+  font-family: Georgia, "Times New Roman", serif;
+  font-style: oblique 18deg;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-shadow: 0 0 14px rgba(143, 216, 255, .45);
+}
+
+.footer-poem {
+  color: #ff8a00;
+  font-family: "STKaiti", "KaiTi", "FangSong", "Microsoft YaHei UI", serif;
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: .16em;
+  white-space: nowrap;
+  text-shadow:
+    .35px 0 0 rgba(255, 138, 0, .9),
+    0 0 12px rgba(255, 111, 0, .36);
+}
+
+.shell.is-expanded .expanded-footer {
+  opacity: 1;
 }
