@@ -40,10 +40,60 @@ let collapsedPosition: { x: number, y: number } | null = null
 let expanding = false
 
 const collapsedWidth = 58
-const expandedWidth = 420
-const expandedHeight = 820
+const expandedWidth = 360
+const minExpandedHeight = 520
+const maxExpandedHeight = 920
+const flyPanelHeight = 318
+const dockTop = 8
+const dockControlsHeight = 64
+const letterHeight = 20
+const flyPanelOffsetY = 26
+const flyPanelBottomGap = 18
 let currentExpandedWidth = collapsedWidth
 let currentWindowHeight = 86
+
+const gradientThemes = [
+  {
+    shell: 'radial-gradient(circle at 82% 46%, rgba(67, 176, 255, .24), transparent 34%), radial-gradient(circle at 18% 18%, rgba(255, 105, 180, .20), transparent 36%), linear-gradient(135deg, rgba(14, 25, 44, .34), rgba(34, 19, 48, .22))',
+    card: 'linear-gradient(135deg, rgba(67, 176, 255, .16), rgba(255, 105, 180, .10))',
+  },
+  {
+    shell: 'radial-gradient(circle at 76% 42%, rgba(121, 255, 201, .22), transparent 34%), radial-gradient(circle at 22% 16%, rgba(255, 210, 94, .18), transparent 36%), linear-gradient(135deg, rgba(12, 36, 34, .34), rgba(42, 32, 12, .20))',
+    card: 'linear-gradient(135deg, rgba(121, 255, 201, .14), rgba(255, 210, 94, .11))',
+  },
+  {
+    shell: 'radial-gradient(circle at 78% 44%, rgba(255, 129, 119, .24), transparent 34%), radial-gradient(circle at 20% 18%, rgba(109, 213, 250, .20), transparent 36%), linear-gradient(135deg, rgba(43, 18, 18, .34), rgba(12, 31, 46, .22))',
+    card: 'linear-gradient(135deg, rgba(255, 129, 119, .15), rgba(109, 213, 250, .10))',
+  },
+  {
+    shell: 'radial-gradient(circle at 80% 44%, rgba(190, 255, 120, .20), transparent 34%), radial-gradient(circle at 20% 18%, rgba(255, 126, 182, .21), transparent 36%), linear-gradient(135deg, rgba(24, 39, 16, .34), rgba(43, 17, 37, .21))',
+    card: 'linear-gradient(135deg, rgba(190, 255, 120, .13), rgba(255, 126, 182, .11))',
+  },
+  {
+    shell: 'radial-gradient(circle at 78% 44%, rgba(137, 152, 255, .24), transparent 34%), radial-gradient(circle at 22% 16%, rgba(255, 186, 112, .20), transparent 36%), linear-gradient(135deg, rgba(20, 22, 52, .34), rgba(45, 28, 15, .22))',
+    card: 'linear-gradient(135deg, rgba(137, 152, 255, .15), rgba(255, 186, 112, .10))',
+  },
+]
+
+function randomGradientIndex(exclude = -1) {
+  if (gradientThemes.length <= 1) return 0
+  let next = Math.floor(Math.random() * gradientThemes.length)
+  while (next === exclude) next = Math.floor(Math.random() * gradientThemes.length)
+  return next
+}
+
+const gradientIndex = ref(randomGradientIndex())
+const shellStyle = computed(() => {
+  const theme = gradientThemes[gradientIndex.value]
+  return {
+    '--shell-bg': theme.shell,
+    '--card-bg': theme.card,
+  }
+})
+
+function changeGradientTheme() {
+  gradientIndex.value = randomGradientIndex(gradientIndex.value)
+}
 
 const grouped = computed(() => {
   const result = new Map<string, LauncherItem[]>()
@@ -81,7 +131,7 @@ onMounted(async () => {
     }
     showSettings.value = true
     currentExpandedWidth = expandedWidth
-    currentWindowHeight = expandedHeight
+    currentWindowHeight = getExpandedHeight()
     WindowSetSize(currentExpandedWidth, currentWindowHeight)
     expanded.value = true
   } catch (err) {
@@ -212,7 +262,14 @@ function onLetterEnter(letter: string, event: MouseEvent) {
 
 function getCollapsedHeight() {
   const lettersHeight = Math.max(1, visibleLetters.value.length) * 20
-  return Math.min(Math.max(lettersHeight + 42, 78), expandedHeight)
+  return Math.min(Math.max(lettersHeight + 42, 78), getExpandedHeight())
+}
+
+function getExpandedHeight() {
+  const lettersCount = Math.max(1, visibleLetters.value.length)
+  const lastLetterCenter = dockTop + dockControlsHeight + ((lettersCount - 1) * letterHeight) + (letterHeight / 2)
+  const heightForLastBubble = Math.ceil(lastLetterCenter - flyPanelOffsetY + flyPanelHeight + flyPanelBottomGap)
+  return Math.min(Math.max(heightForLastBubble, minExpandedHeight), maxExpandedHeight)
 }
 
 async function expandWindow(width = expandedWidth) {
@@ -220,11 +277,13 @@ async function expandWindow(width = expandedWidth) {
   if (expanding) return
   expanding = true
   try {
+    const wasCollapsed = !expanded.value
     if (!expanded.value) {
       collapsedPosition = await WindowGetPosition()
     }
     const anchor = collapsedPosition ?? await WindowGetPosition()
     const collapsedHeight = getCollapsedHeight()
+    const expandedHeight = getExpandedHeight()
     const rightEdge = anchor.x + collapsedWidth
     const expandedX = rightEdge - width
     const expandedY = anchor.y - Math.round((expandedHeight - collapsedHeight) / 2)
@@ -233,6 +292,7 @@ async function expandWindow(width = expandedWidth) {
     currentExpandedWidth = width
     currentWindowHeight = expandedHeight
     expanded.value = true
+    if (wasCollapsed) changeGradientTheme()
   } catch {
     // 忽略窗口扩展失败。
   } finally {
@@ -263,11 +323,13 @@ function scheduleCollapse() {
       currentExpandedWidth = collapsedWidth
       currentWindowHeight = collapsedHeight
       collapsedPosition = { x: anchor.x, y: anchor.y }
+      changeGradientTheme()
       await SaveWindowPosition(anchor.x, anchor.y)
     } catch {
       expanded.value = false
       currentExpandedWidth = collapsedWidth
       currentWindowHeight = getCollapsedHeight()
+      changeGradientTheme()
     }
   }, 520)
 }
@@ -288,7 +350,7 @@ function quitApp() {
 </script>
 
 <template>
-  <main class="shell" :class="{ 'is-expanded': expanded }" @mouseenter="cancelCollapse" @mouseleave="scheduleCollapse">
+  <main class="shell" :class="{ 'is-expanded': expanded }" :style="shellStyle" @mouseenter="cancelCollapse" @mouseleave="scheduleCollapse">
     <section v-if="booting" class="empty glass-card booting">正在读取本地配置...</section>
 
     <section v-else-if="showSettings || !hasFolders" class="setup glass-card">
