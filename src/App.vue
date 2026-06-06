@@ -1,7 +1,7 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Quit, WindowGetPosition, WindowSetPosition, WindowSetSize } from '../wailsjs/runtime/runtime'
-import { ChooseFolder, GetConfig, GetIcon, OpenItem, SaveWindowPosition, ScanFolders, SetSettings } from '../wailsjs/go/main/App'
+import { ChooseFolder, GetConfig, GetIcon, GetTypeIcon, OpenItem, SaveWindowPosition, ScanFolders, SetSettings } from '../wailsjs/go/main/App'
 
 type AppConfig = {
   folder: string | null
@@ -23,7 +23,7 @@ type LauncherItem = {
 }
 
 const letters = ['#', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')]
-const defaultPoem = '去年海棠玉殿惊 长袖当凤凰行'
+const defaultPoem = '鍘诲勾娴锋鐜夋鎯?闀胯褰撳嚖鍑拌'
 const folders = ref<string[]>([])
 const settingsFolders = ref<string[]>([])
 const poem = ref(defaultPoem)
@@ -55,6 +55,7 @@ const flyPanelOffsetY = 26
 const flyPanelBottomGap = 18
 let currentExpandedWidth = collapsedWidth
 let currentWindowHeight = 86
+const typeIconPromises = new Map<string, Promise<string>>()
 
 type GradientTheme = {
   shell: string
@@ -247,22 +248,35 @@ async function confirmSettings() {
 async function loadIcons(sourceItems: LauncherItem[]) {
   for (const item of sourceItems) {
     if (item.icon) continue
-    if (!shouldLoadNativeIcon(item)) continue
     try {
-      const icon = await GetIcon(item.path)
+      const icon = await loadItemIcon(item)
       if (!icon) continue
       const current = items.value.find((candidate) => candidate.path === item.path)
       if (current) current.icon = icon
     } catch {
-      // 单个文件图标提取失败时忽略，继续展示默认图标。
+      // Ignore a failed icon and keep the fallback image.
     }
   }
 }
 
-function shouldLoadNativeIcon(item: LauncherItem) {
-  if (item.isDir) return false
+async function loadItemIcon(item: LauncherItem) {
+  if (item.isDir) return loadTypeIcon('folder')
   const ext = item.extension.toLowerCase()
-  return ext === 'lnk' || ext === 'exe' || ext === 'url'
+  if (ext === 'lnk' || ext === 'exe') return GetIcon(item.path)
+  if (!ext) return ''
+  return loadTypeIcon(ext)
+}
+
+function loadTypeIcon(ext: string) {
+  let promise = typeIconPromises.get(ext)
+  if (!promise) {
+    promise = GetTypeIcon(ext).catch((err) => {
+      typeIconPromises.delete(ext)
+      throw err
+    })
+    typeIconPromises.set(ext, promise)
+  }
+  return promise
 }
 
 async function openItem(item: LauncherItem) {
@@ -322,7 +336,7 @@ async function expandWindow(width = expandedWidth) {
     expanded.value = true
     if (wasCollapsed) changeGradientTheme()
   } catch {
-    // 忽略窗口扩展失败。
+    // 蹇界暐绐楀彛鎵╁睍澶辫触銆?
   } finally {
     expanding = false
   }
@@ -362,14 +376,15 @@ function scheduleCollapse() {
   }, 520)
 }
 
+function fileIconUrl(kind: string, label: string, color: string) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="12" y1="6" x2="52" y2="58"><stop stop-color="${color}"/><stop offset="1" stop-color="#ffffff" stop-opacity=".72"/></linearGradient></defs><path d="M16 8h23l11 11v37H16z" fill="url(#g)" opacity=".96"/><path d="M39 8v12h11" fill="#fff" opacity=".38"/><path d="M21 34h22M21 42h18" stroke="#1b2330" stroke-width="3" stroke-linecap="round" opacity=".54"/><text x="32" y="29" text-anchor="middle" font-family="Segoe UI,Arial" font-size="${kind === 'small' ? 13 : 15}" font-weight="800" fill="#1b2330" opacity=".78">${label}</text></svg>`
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`
+}
+
 function iconOf(item: LauncherItem) {
-  if (item.isDir) return '📁'
+  if (item.isDir) return fileIconUrl('small', 'DIR', '#ffd166')
   const ext = item.extension.toLowerCase()
-  if (ext === 'exe') return '⚡'
-  if (ext === 'lnk') return '↗'
-  if (ext === 'url') return '🌐'
-  if (['bat', 'cmd', 'ps1'].includes(ext)) return '⌘'
-  return '✨'
+  return fileIconUrl('small', (ext || 'FILE').slice(0, 4).toUpperCase(), '#cbd5e1')
 }
 
 function quitApp() {
@@ -404,20 +419,18 @@ function quitApp() {
 
     <template v-else>
       <aside class="alphabet-dock" aria-label="字母表" @mouseenter="cancelCollapse">
-        <div class="alphabet-rail">
-          <button class="settings-dot" title="设置" @click="openSettings">⚙</button>
-          <button class="refresh-dot" :disabled="loading" title="刷新" @click="refresh">↻</button>
-          <button
-            v-for="letter in visibleLetters"
-            :key="letter"
-            class="letter"
-            :class="{ active: dockFocused && activeLetter === letter, filled: (grouped.get(letter)?.length ?? 0) > 0 }"
-            @mouseenter="onLetterEnter(letter, $event)"
-            @click="activeLetter = letter"
-          >
-            {{ letter }}
-          </button>
-        </div>
+        <button class="settings-dot" title="设置" @click="openSettings">⚙</button>
+        <button class="refresh-dot" :disabled="loading" title="刷新" @click="refresh">↻</button>
+        <button
+          v-for="letter in visibleLetters"
+          :key="letter"
+          class="letter"
+          :class="{ active: dockFocused && activeLetter === letter, filled: (grouped.get(letter)?.length ?? 0) > 0 }"
+          @mouseenter="onLetterEnter(letter, $event)"
+          @click="activeLetter = letter"
+        >
+          {{ letter }}
+        </button>
       </aside>
 
       <div class="fly-panel glass-card" :style="{ top: `${activeY}px` }" @mouseenter="cancelCollapse">
@@ -427,7 +440,7 @@ function quitApp() {
           <button v-for="item in activeItems" :key="`fly-${item.path}`" class="fly-item" @click="openItem(item)">
             <span class="fly-icon">
               <img v-if="item.icon" :src="item.icon" :alt="item.name" />
-              <span v-else>{{ iconOf(item) }}</span>
+              <img v-else :src="iconOf(item)" :alt="item.extension || item.name" />
             </span>
             <strong>{{ item.name }}</strong>
           </button>

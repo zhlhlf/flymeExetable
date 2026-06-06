@@ -14,6 +14,10 @@ export function GetIcon(arg1) {
   return window['go']['main']['App']['GetIcon'](arg1);
 }
 
+export function GetTypeIcon(arg1) {
+  return window['go']['main']['App']['GetTypeIcon'](arg1);
+}
+
 export function OpenItem(arg1) {
   return window['go']['main']['App']['OpenItem'](arg1);
 }

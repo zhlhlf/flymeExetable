@@ -8,6 +8,8 @@ export function GetConfig():Promise<main.AppConfig>;
 
 export function GetIcon(arg1:string):Promise<string>;
 
+export function GetTypeIcon(arg1:string):Promise<string>;
+
 export function OpenItem(arg1:string):Promise<void>;
 
 export function SaveWindowPosition(arg1:number,arg2:number):Promise<void>;

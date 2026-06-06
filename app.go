@@ -88,6 +88,24 @@ func iconsDir() (string, error) {
 	return path, os.MkdirAll(path, 0755)
 }
 
+func typeIconsDir() (string, error) {
+	dir, err := iconsDir()
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, "types")
+	return path, os.MkdirAll(path, 0755)
+}
+
+func typeIconSamplesDir() (string, error) {
+	dir, err := iconsDir()
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, "type-samples")
+	return path, os.MkdirAll(path, 0755)
+}
+
 const defaultPoem = "去年海棠玉殿惊 长袖当凤凰行"
 
 func defaultConfig() AppConfig {
@@ -334,6 +352,57 @@ func iconCachePath(path string) (string, error) {
 	return filepath.Join(dir, fmt.Sprintf("%x.png", sum)), nil
 }
 
+func normalizeExtension(ext string) string {
+	ext = strings.TrimSpace(strings.TrimPrefix(strings.ToLower(ext), "."))
+	if ext == "" {
+		return ""
+	}
+	var builder strings.Builder
+	for _, r := range ext {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			builder.WriteRune(r)
+		}
+	}
+	return builder.String()
+}
+
+func typeIconCachePath(ext string) (string, error) {
+	ext = normalizeExtension(ext)
+	if ext == "" {
+		return "", errors.New("empty extension")
+	}
+	dir, err := typeIconsDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, ext+".png"), nil
+}
+
+func typeIconSamplePath(ext string) (string, error) {
+	ext = normalizeExtension(ext)
+	if ext == "" {
+		return "", errors.New("empty extension")
+	}
+	dir, err := typeIconSamplesDir()
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, "sample."+ext)
+	return path, nil
+}
+
+func folderIconSamplePath() (string, error) {
+	dir, err := typeIconSamplesDir()
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, "folder")
+	if err := os.MkdirAll(path, 0755); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
 func iconDataURL(path string) string {
 	cache, err := iconCachePath(path)
 	if err != nil {
@@ -354,29 +423,119 @@ func iconDataURL(path string) string {
 	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(data)
 }
 
+func typeIconDataURL(ext string) string {
+	cache, err := typeIconCachePath(ext)
+	if err != nil {
+		return ""
+	}
+
+	if info, err := os.Stat(cache); err != nil || info.Size() == 0 {
+		_ = os.Remove(cache)
+		var sample string
+		if normalizeExtension(ext) == "folder" {
+			sample, err = folderIconSamplePath()
+		} else {
+			sample, err = typeIconSamplePath(ext)
+		}
+		if err != nil {
+			return ""
+		}
+		if err := extractWindowsIcon(sample, cache); err != nil {
+			return ""
+		}
+	}
+
+	data, err := os.ReadFile(cache)
+	if err != nil || len(data) == 0 {
+		return ""
+	}
+	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(data)
+}
+
 func extractWindowsIcon(sourcePath string, outputPath string) error {
 	if runtime.GOOS != "windows" {
 		return errors.New("only windows is supported")
 	}
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
+		return err
+	}
+	tempOutput := outputPath + ".tmp"
+	_ = os.Remove(tempOutput)
+	defer os.Remove(tempOutput)
 
-	ps := `Add-Type -AssemblyName System.Drawing; ` +
-		`$p = $env:JCZHL_ICON_SOURCE; $o = $env:JCZHL_ICON_OUTPUT; ` +
-		`$icon = [System.Drawing.Icon]::ExtractAssociatedIcon($p); ` +
-		`if ($null -eq $icon) { exit 2 }; ` +
-		`$bmp = $icon.ToBitmap(); ` +
-		`$bmp.Save($o, [System.Drawing.Imaging.ImageFormat]::Png); ` +
-		`$bmp.Dispose(); $icon.Dispose();`
+	ps := `
+Add-Type -AssemblyName System.Drawing
+Add-Type -ReferencedAssemblies System.Drawing -TypeDefinition @"
+using System;
+using System.Drawing;
+using System.Runtime.InteropServices;
+
+public class JczhlShellIcon {
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct SHFILEINFO {
+        public IntPtr hIcon;
+        public int iIcon;
+        public uint dwAttributes;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+        public string szDisplayName;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 80)]
+        public string szTypeName;
+    }
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr SHGetFileInfo(string pszPath, uint dwFileAttributes, ref SHFILEINFO psfi, uint cbFileInfo, uint uFlags);
+
+    [DllImport("user32.dll")]
+    public static extern bool DestroyIcon(IntPtr hIcon);
+
+    public static void Save(string path, string output, bool directory) {
+        const uint SHGFI_ICON = 0x000000100;
+        const uint SHGFI_LARGEICON = 0x000000000;
+        const uint SHGFI_USEFILEATTRIBUTES = 0x000000010;
+        const uint FILE_ATTRIBUTE_DIRECTORY = 0x00000010;
+        const uint FILE_ATTRIBUTE_NORMAL = 0x00000080;
+        SHFILEINFO info = new SHFILEINFO();
+        uint attributes = directory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+        IntPtr result = SHGetFileInfo(path, attributes, ref info, (uint)Marshal.SizeOf(typeof(SHFILEINFO)), SHGFI_ICON | SHGFI_LARGEICON | SHGFI_USEFILEATTRIBUTES);
+        if (result == IntPtr.Zero || info.hIcon == IntPtr.Zero) {
+            throw new Exception("SHGetFileInfo failed");
+        }
+        Icon icon = (Icon)Icon.FromHandle(info.hIcon).Clone();
+        try {
+            using (Bitmap bitmap = icon.ToBitmap()) {
+                bitmap.Save(output, System.Drawing.Imaging.ImageFormat.Png);
+            }
+        } finally {
+            icon.Dispose();
+            DestroyIcon(info.hIcon);
+        }
+    }
+}
+"@
+$p = $env:JCZHL_ICON_SOURCE
+$o = $env:JCZHL_ICON_OUTPUT
+$isDir = [System.IO.Directory]::Exists($p)
+[JczhlShellIcon]::Save($p, $o, $isDir)
+`
 
 	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-Command", ps)
 	cmd.Env = append(os.Environ(),
 		"JCZHL_ICON_SOURCE="+sourcePath,
-		"JCZHL_ICON_OUTPUT="+outputPath,
+		"JCZHL_ICON_OUTPUT="+tempOutput,
 	)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		HideWindow:    true,
 		CreationFlags: 0x08000000, // CREATE_NO_WINDOW
 	}
-	return cmd.Run()
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+	}
+	if info, err := os.Stat(tempOutput); err != nil || info.Size() == 0 {
+		return errors.New("icon extraction produced empty file")
+	}
+	_ = os.Remove(outputPath)
+	return os.Rename(tempOutput, outputPath)
 }
 
 func (a *App) GetConfig() (AppConfig, error) {
@@ -472,6 +631,13 @@ func (a *App) GetIcon(path string) (string, error) {
 		return "", errors.New("only windows is supported")
 	}
 	return iconDataURL(path), nil
+}
+
+func (a *App) GetTypeIcon(ext string) (string, error) {
+	if runtime.GOOS != "windows" {
+		return "", errors.New("only windows is supported")
+	}
+	return typeIconDataURL(ext), nil
 }
 
 func (a *App) OpenItem(path string) error {
