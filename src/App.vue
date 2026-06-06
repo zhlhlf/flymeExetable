@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Quit, WindowGetPosition, WindowSetPosition, WindowSetSize } from '../wailsjs/runtime/runtime'
-import { ChooseFolder, GetConfig, GetIcon, OpenItem, SaveWindowPosition, ScanFolders, SetFolders } from '../wailsjs/go/main/App'
+import { ChooseFolder, GetConfig, GetIcon, OpenItem, SaveWindowPosition, ScanFolders, SetSettings } from '../wailsjs/go/main/App'
 
 type AppConfig = {
   folder: string | null
@@ -10,6 +10,7 @@ type AppConfig = {
     x: number
     y: number
   } | null
+  poem?: string
 }
 
 type LauncherItem = {
@@ -22,8 +23,11 @@ type LauncherItem = {
 }
 
 const letters = ['#', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')]
+const defaultPoem = '去年海棠玉殿惊 长袖当凤凰行'
 const folders = ref<string[]>([])
 const settingsFolders = ref<string[]>([])
+const poem = ref(defaultPoem)
+const settingsPoem = ref(defaultPoem)
 const items = ref<LauncherItem[]>([])
 const activeLetter = ref('A')
 const loading = ref(false)
@@ -52,39 +56,44 @@ const flyPanelBottomGap = 18
 let currentExpandedWidth = collapsedWidth
 let currentWindowHeight = 86
 
-const gradientThemes = [
-  {
-    shell: 'radial-gradient(circle at 82% 46%, rgba(67, 176, 255, .24), transparent 34%), radial-gradient(circle at 18% 18%, rgba(255, 105, 180, .20), transparent 36%), linear-gradient(135deg, rgba(14, 25, 44, .34), rgba(34, 19, 48, .22))',
-    card: 'linear-gradient(135deg, rgba(67, 176, 255, .16), rgba(255, 105, 180, .10))',
-  },
-  {
-    shell: 'radial-gradient(circle at 76% 42%, rgba(121, 255, 201, .22), transparent 34%), radial-gradient(circle at 22% 16%, rgba(255, 210, 94, .18), transparent 36%), linear-gradient(135deg, rgba(12, 36, 34, .34), rgba(42, 32, 12, .20))',
-    card: 'linear-gradient(135deg, rgba(121, 255, 201, .14), rgba(255, 210, 94, .11))',
-  },
-  {
-    shell: 'radial-gradient(circle at 78% 44%, rgba(255, 129, 119, .24), transparent 34%), radial-gradient(circle at 20% 18%, rgba(109, 213, 250, .20), transparent 36%), linear-gradient(135deg, rgba(43, 18, 18, .34), rgba(12, 31, 46, .22))',
-    card: 'linear-gradient(135deg, rgba(255, 129, 119, .15), rgba(109, 213, 250, .10))',
-  },
-  {
-    shell: 'radial-gradient(circle at 80% 44%, rgba(190, 255, 120, .20), transparent 34%), radial-gradient(circle at 20% 18%, rgba(255, 126, 182, .21), transparent 36%), linear-gradient(135deg, rgba(24, 39, 16, .34), rgba(43, 17, 37, .21))',
-    card: 'linear-gradient(135deg, rgba(190, 255, 120, .13), rgba(255, 126, 182, .11))',
-  },
-  {
-    shell: 'radial-gradient(circle at 78% 44%, rgba(137, 152, 255, .24), transparent 34%), radial-gradient(circle at 22% 16%, rgba(255, 186, 112, .20), transparent 36%), linear-gradient(135deg, rgba(20, 22, 52, .34), rgba(45, 28, 15, .22))',
-    card: 'linear-gradient(135deg, rgba(137, 152, 255, .15), rgba(255, 186, 112, .10))',
-  },
-]
-
-function randomGradientIndex(exclude = -1) {
-  if (gradientThemes.length <= 1) return 0
-  let next = Math.floor(Math.random() * gradientThemes.length)
-  while (next === exclude) next = Math.floor(Math.random() * gradientThemes.length)
-  return next
+type GradientTheme = {
+  shell: string
+  card: string
 }
 
-const gradientIndex = ref(randomGradientIndex())
+function randomHue() {
+  return Math.floor(Math.random() * 360)
+}
+
+function hueShift(hue: number, shift: number) {
+  return (hue + shift + 360) % 360
+}
+
+function hsl(hue: number, saturation: number, lightness: number, alpha: number) {
+  return `hsla(${hue}, ${saturation}%, ${lightness}%, ${alpha})`
+}
+
+function randomGradientTheme(): GradientTheme {
+  const primary = randomHue()
+  const secondary = hueShift(primary, 80 + Math.floor(Math.random() * 120))
+  const accent = hueShift(primary, 190 + Math.floor(Math.random() * 110))
+  const baseA = hueShift(primary, -8 + Math.floor(Math.random() * 16))
+  const baseB = hueShift(secondary, -12 + Math.floor(Math.random() * 24))
+
+  return {
+    shell: [
+      `radial-gradient(circle at ${72 + Math.floor(Math.random() * 12)}% ${38 + Math.floor(Math.random() * 14)}%, ${hsl(primary, 92, 64, .24)}, transparent 34%)`,
+      `radial-gradient(circle at ${16 + Math.floor(Math.random() * 16)}% ${12 + Math.floor(Math.random() * 16)}%, ${hsl(secondary, 88, 66, .20)}, transparent 36%)`,
+      `radial-gradient(circle at ${32 + Math.floor(Math.random() * 28)}% ${74 + Math.floor(Math.random() * 14)}%, ${hsl(accent, 86, 64, .14)}, transparent 38%)`,
+      `linear-gradient(135deg, ${hsl(baseA, 64, 17, .34)}, ${hsl(baseB, 62, 15, .22)})`,
+    ].join(', '),
+    card: `linear-gradient(135deg, ${hsl(primary, 90, 66, .15)}, ${hsl(secondary, 88, 68, .10)})`,
+  }
+}
+
+const gradientTheme = ref(randomGradientTheme())
 const shellStyle = computed(() => {
-  const theme = gradientThemes[gradientIndex.value]
+  const theme = gradientTheme.value
   return {
     '--shell-bg': theme.shell,
     '--card-bg': theme.card,
@@ -92,7 +101,7 @@ const shellStyle = computed(() => {
 })
 
 function changeGradientTheme() {
-  gradientIndex.value = randomGradientIndex(gradientIndex.value)
+  gradientTheme.value = randomGradientTheme()
 }
 
 const grouped = computed(() => {
@@ -112,6 +121,11 @@ const activeItems = computed(() => grouped.value.get(activeLetter.value) ?? [])
 const totalItems = computed(() => items.value.length)
 const visibleLetters = computed(() => letters.filter((letter) => (grouped.value.get(letter)?.length ?? 0) > 0))
 const hasFolders = computed(() => folders.value.length > 0)
+const sidePoemLines = computed(() => {
+  const parts = poem.value.trim().split(/\s+/).filter(Boolean)
+  if (parts.length >= 2) return [parts[0], parts.slice(1).join('')]
+  return [poem.value.trim() || defaultPoem, '']
+})
 
 onMounted(async () => {
   try {
@@ -122,8 +136,10 @@ onMounted(async () => {
       collapsedPosition = { x: config.windowPosition.x, y: config.windowPosition.y }
       WindowSetPosition(config.windowPosition.x, config.windowPosition.y)
     }
+    poem.value = config.poem?.trim() || defaultPoem
     folders.value = normalizeFolderList(config.folders?.length ? config.folders : (config.folder ? [config.folder] : []))
     settingsFolders.value = [...folders.value]
+    settingsPoem.value = poem.value
     if (folders.value.length > 0) {
       booting.value = false
       await refresh()
@@ -156,9 +172,11 @@ async function chooseFolder() {
     if (!selected) return
 
     const nextFolders = normalizeFolderList([...settingsFolders.value, selected])
-    const config = await SetFolders(nextFolders)
+    const config = await SetSettings(nextFolders, settingsPoem.value)
     folders.value = normalizeFolderList(config.folders?.length ? config.folders : nextFolders)
     settingsFolders.value = [...folders.value]
+    poem.value = config.poem?.trim() || defaultPoem
+    settingsPoem.value = poem.value
     if (folders.value.length > 0) await refresh()
   } finally {
     choosingFolder.value = false
@@ -206,6 +224,7 @@ async function openSettings() {
   await expandWindow()
   cancelCollapse()
   settingsFolders.value = [...folders.value]
+  settingsPoem.value = poem.value
   showSettings.value = true
 }
 
@@ -215,9 +234,11 @@ function removeSettingsFolder(index: number) {
 
 async function confirmSettings() {
   const nextFolders = normalizeFolderList(settingsFolders.value)
-  const config = await SetFolders(nextFolders)
+  const config = await SetSettings(nextFolders, settingsPoem.value)
   folders.value = normalizeFolderList(config.folders?.length ? config.folders : nextFolders)
   settingsFolders.value = [...folders.value]
+  poem.value = config.poem?.trim() || defaultPoem
+  settingsPoem.value = poem.value
   showSettings.value = false
   await refresh()
   scheduleCollapse()
@@ -226,6 +247,7 @@ async function confirmSettings() {
 async function loadIcons(sourceItems: LauncherItem[]) {
   for (const item of sourceItems) {
     if (item.icon) continue
+    if (!shouldLoadNativeIcon(item)) continue
     try {
       const icon = await GetIcon(item.path)
       if (!icon) continue
@@ -235,6 +257,12 @@ async function loadIcons(sourceItems: LauncherItem[]) {
       // 单个文件图标提取失败时忽略，继续展示默认图标。
     }
   }
+}
+
+function shouldLoadNativeIcon(item: LauncherItem) {
+  if (item.isDir) return false
+  const ext = item.extension.toLowerCase()
+  return ext === 'lnk' || ext === 'exe' || ext === 'url'
 }
 
 async function openItem(item: LauncherItem) {
@@ -351,6 +379,9 @@ function quitApp() {
 
 <template>
   <main class="shell" :class="{ 'is-expanded': expanded }" :style="shellStyle" @mouseenter="cancelCollapse" @mouseleave="scheduleCollapse">
+    <div v-if="!expanded && hasFolders" class="side-poem side-poem-left-primary">{{ sidePoemLines[0] }}</div>
+    <div v-if="!expanded && hasFolders && sidePoemLines[1]" class="side-poem side-poem-left-secondary">{{ sidePoemLines[1] }}</div>
+
     <section v-if="booting" class="empty glass-card booting">正在读取本地配置...</section>
 
     <section v-else-if="showSettings || !hasFolders" class="setup glass-card">
@@ -364,6 +395,7 @@ function quitApp() {
           <button @click="removeSettingsFolder(index)">×</button>
         </div>
       </div>
+      <input v-model="settingsPoem" class="poem-input" maxlength="32" placeholder="自定义诗句" />
       <div class="settings-actions">
         <button class="ghost big" @click="chooseFolder">添加目录</button>
         <button class="primary big" :disabled="!settingsFolders.length" @click="confirmSettings">确认</button>
@@ -372,18 +404,20 @@ function quitApp() {
 
     <template v-else>
       <aside class="alphabet-dock" aria-label="字母表" @mouseenter="cancelCollapse">
-        <button class="settings-dot" title="设置" @click="openSettings">⚙</button>
-        <button class="refresh-dot" :disabled="loading" title="刷新" @click="refresh">↻</button>
-        <button
-          v-for="letter in visibleLetters"
-          :key="letter"
-          class="letter"
-          :class="{ active: dockFocused && activeLetter === letter, filled: (grouped.get(letter)?.length ?? 0) > 0 }"
-          @mouseenter="onLetterEnter(letter, $event)"
-          @click="activeLetter = letter"
-        >
-          {{ letter }}
-        </button>
+        <div class="alphabet-rail">
+          <button class="settings-dot" title="设置" @click="openSettings">⚙</button>
+          <button class="refresh-dot" :disabled="loading" title="刷新" @click="refresh">↻</button>
+          <button
+            v-for="letter in visibleLetters"
+            :key="letter"
+            class="letter"
+            :class="{ active: dockFocused && activeLetter === letter, filled: (grouped.get(letter)?.length ?? 0) > 0 }"
+            @mouseenter="onLetterEnter(letter, $event)"
+            @click="activeLetter = letter"
+          >
+            {{ letter }}
+          </button>
+        </div>
       </aside>
 
       <div class="fly-panel glass-card" :style="{ top: `${activeY}px` }" @mouseenter="cancelCollapse">
@@ -402,7 +436,7 @@ function quitApp() {
 
       <div class="expanded-footer">
         <div class="footer-name">zhlhlf</div>
-        <button class="footer-poem" title="退出应用" @click="quitApp">去年海棠玉殿惊 长袖当凤凰行</button>
+        <button class="footer-poem" title="退出应用" @click="quitApp">{{ poem }}</button>
       </div>
     </template>
   </main>

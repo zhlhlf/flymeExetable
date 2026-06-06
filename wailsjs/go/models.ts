@@ -18,6 +18,7 @@ export namespace main {
 	    folder?: string;
 	    folders: string[];
 	    windowPosition?: WindowPosition;
+	    poem: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new AppConfig(source);
@@ -28,6 +29,7 @@ export namespace main {
 	        this.folder = source["folder"];
 	        this.folders = source["folders"];
 	        this.windowPosition = this.convertValues(source["windowPosition"], WindowPosition);
+	        this.poem = source["poem"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

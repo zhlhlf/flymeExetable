@@ -29,6 +29,7 @@ type AppConfig struct {
 	Folder         *string         `json:"folder"`
 	Folders        []string        `json:"folders"`
 	WindowPosition *WindowPosition `json:"windowPosition"`
+	Poem           string          `json:"poem"`
 }
 
 type WindowPosition struct {
@@ -87,8 +88,10 @@ func iconsDir() (string, error) {
 	return path, os.MkdirAll(path, 0755)
 }
 
+const defaultPoem = "去年海棠玉殿惊 长袖当凤凰行"
+
 func defaultConfig() AppConfig {
-	return AppConfig{Folder: nil, Folders: []string{}, WindowPosition: nil}
+	return AppConfig{Folder: nil, Folders: []string{}, WindowPosition: nil, Poem: defaultPoem}
 }
 
 func readConfig() (AppConfig, error) {
@@ -113,6 +116,9 @@ func readConfig() (AppConfig, error) {
 	}
 	if len(cfg.Folders) == 0 && cfg.Folder != nil && *cfg.Folder != "" {
 		cfg.Folders = []string{*cfg.Folder}
+	}
+	if strings.TrimSpace(cfg.Poem) == "" {
+		cfg.Poem = defaultPoem
 	}
 	return cfg, nil
 }
@@ -401,6 +407,21 @@ func (a *App) SetFolders(folders []string) (AppConfig, error) {
 	cfg.Folder = nil
 	if len(cleaned) > 0 {
 		cfg.Folder = &cleaned[0]
+	}
+	return cfg, writeConfig(cfg)
+}
+
+func (a *App) SetSettings(folders []string, poem string) (AppConfig, error) {
+	cleaned := normalizeFolders(folders)
+	cfg, _ := readConfig()
+	cfg.Folders = cleaned
+	cfg.Folder = nil
+	if len(cleaned) > 0 {
+		cfg.Folder = &cleaned[0]
+	}
+	cfg.Poem = strings.TrimSpace(poem)
+	if cfg.Poem == "" {
+		cfg.Poem = defaultPoem
 	}
 	return cfg, writeConfig(cfg)
 }

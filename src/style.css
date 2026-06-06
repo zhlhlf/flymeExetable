@@ -173,6 +173,25 @@ button:disabled {
 .settings-list::-webkit-scrollbar { width: 6px; }
 .settings-list::-webkit-scrollbar-thumb { border-radius: 999px; background: rgba(255, 167, 73, .36); }
 
+.poem-input {
+  width: min(520px, calc(100vw - 56px));
+  height: 42px;
+  margin: 0 0 18px;
+  padding: 0 14px;
+  border: 1px solid rgba(255, 184, 106, .18);
+  border-radius: 16px;
+  outline: none;
+  background: rgba(255, 132, 0, .10);
+  color: rgba(255, 232, 204, .90);
+  font: inherit;
+  text-align: center;
+  --wails-draggable: no-drag;
+}
+
+.poem-input::placeholder {
+  color: rgba(255, 214, 174, .42);
+}
+
 .settings-empty,
 .settings-row {
   display: flex;
@@ -343,10 +362,50 @@ button:disabled {
 
 .error { color: #ffd3ba; }
 
+.side-poem {
+  position: fixed;
+  z-index: 4;
+  pointer-events: none;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  color: rgba(255, 224, 184, .62);
+  font-family: "STKaiti", "KaiTi", "FangSong", "Microsoft YaHei UI", serif;
+  font-size: 16px;
+  font-weight: 400;
+  font-style: italic;
+  line-height: 1.05;
+  letter-spacing: .16em;
+  text-shadow:
+    .35px 0 0 rgba(255, 138, 0, .9),
+    0 0 12px rgba(255, 111, 0, .36);
+  white-space: nowrap;
+  transform: skewY(-8deg);
+}
+
+.side-poem-left-primary {
+  top: 46px;
+  left: 5px;
+}
+
+.side-poem-left-secondary {
+  top: 84px;
+  left: 24px;
+}
+
 .alphabet-dock {
   position: fixed;
   z-index: 6;
   top: 8px;
+  right: 0;
+  width: 160px;
+  min-height: calc(100vh - 16px);
+  background: transparent;
+  --wails-draggable: no-drag;
+}
+
+.alphabet-rail {
+  position: absolute;
+  top: 0;
   right: 6px;
   display: flex;
   flex-direction: column;

@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
-const source = join(root, 'appicon.png')
+const source = join(root, 'appicon-rounded.png')
 const buildDir = join(root, 'build')
 const windowsIcon = join(buildDir, 'windows', 'icon.ico')
 const buildIcon = join(buildDir, 'appicon.png')

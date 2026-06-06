@@ -37,3 +37,7 @@ export function SetFolder(arg1) {
 export function SetFolders(arg1) {
   return window['go']['main']['App']['SetFolders'](arg1);
 }
+
+export function SetSettings(arg1, arg2) {
+  return window['go']['main']['App']['SetSettings'](arg1, arg2);
+}

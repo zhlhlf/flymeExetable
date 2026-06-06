@@ -19,3 +19,5 @@ export function ScanFolders(arg1:Array<string>):Promise<Array<main.LauncherItem>
 export function SetFolder(arg1:string):Promise<main.AppConfig>;
 
 export function SetFolders(arg1:Array<string>):Promise<main.AppConfig>;
+
+export function SetSettings(arg1:Array<string>,arg2:string):Promise<main.AppConfig>;
