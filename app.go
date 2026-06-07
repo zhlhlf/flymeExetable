@@ -7,8 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/png"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -450,6 +451,48 @@ func typeIconDataURL(ext string) string {
 	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(data)
 }
 
+type shFileInfo struct {
+	hIcon         uintptr
+	iIcon         int32
+	dwAttributes  uint32
+	szDisplayName [260]uint16
+	szTypeName    [80]uint16
+}
+
+type bitmapInfoHeader struct {
+	biSize          uint32
+	biWidth         int32
+	biHeight        int32
+	biPlanes        uint16
+	biBitCount      uint16
+	biCompression   uint32
+	biSizeImage     uint32
+	biXPelsPerMeter int32
+	biYPelsPerMeter int32
+	biClrUsed       uint32
+	biClrImportant  uint32
+}
+
+type bitmapInfo struct {
+	bmiHeader bitmapInfoHeader
+	bmiColors [1]uint32
+}
+
+const (
+	shgfiIcon              = 0x000000100
+	shgfiLargeIcon         = 0x000000000
+	shgfiUseFileAttributes = 0x000000010
+
+	fileAttributeReadonly  = 0x00000001
+	fileAttributeDirectory = 0x00000010
+	fileAttributeNormal    = 0x00000080
+
+	biRGB         = 0
+	dibRGBColors  = 0
+	diNormal      = 0x0003
+	iconPixelSize = 32
+)
+
 func extractWindowsIcon(sourcePath string, outputPath string) error {
 	if runtime.GOOS != "windows" {
 		return errors.New("only windows is supported")
@@ -461,79 +504,181 @@ func extractWindowsIcon(sourcePath string, outputPath string) error {
 	_ = os.Remove(tempOutput)
 	defer os.Remove(tempOutput)
 
-	ps := `
-Add-Type -AssemblyName System.Drawing
-Add-Type -ReferencedAssemblies System.Drawing -TypeDefinition @"
-using System;
-using System.Drawing;
-using System.Runtime.InteropServices;
-
-public class JczhlShellIcon {
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    public struct SHFILEINFO {
-        public IntPtr hIcon;
-        public int iIcon;
-        public uint dwAttributes;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
-        public string szDisplayName;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 80)]
-        public string szTypeName;
-    }
-
-    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
-    public static extern IntPtr SHGetFileInfo(string pszPath, uint dwFileAttributes, ref SHFILEINFO psfi, uint cbFileInfo, uint uFlags);
-
-    [DllImport("user32.dll")]
-    public static extern bool DestroyIcon(IntPtr hIcon);
-
-    public static void Save(string path, string output, bool directory) {
-        const uint SHGFI_ICON = 0x000000100;
-        const uint SHGFI_LARGEICON = 0x000000000;
-        const uint SHGFI_USEFILEATTRIBUTES = 0x000000010;
-        const uint FILE_ATTRIBUTE_DIRECTORY = 0x00000010;
-        const uint FILE_ATTRIBUTE_NORMAL = 0x00000080;
-        SHFILEINFO info = new SHFILEINFO();
-        uint attributes = directory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
-        IntPtr result = SHGetFileInfo(path, attributes, ref info, (uint)Marshal.SizeOf(typeof(SHFILEINFO)), SHGFI_ICON | SHGFI_LARGEICON | SHGFI_USEFILEATTRIBUTES);
-        if (result == IntPtr.Zero || info.hIcon == IntPtr.Zero) {
-            throw new Exception("SHGetFileInfo failed");
-        }
-        Icon icon = (Icon)Icon.FromHandle(info.hIcon).Clone();
-        try {
-            using (Bitmap bitmap = icon.ToBitmap()) {
-                bitmap.Save(output, System.Drawing.Imaging.ImageFormat.Png);
-            }
-        } finally {
-            icon.Dispose();
-            DestroyIcon(info.hIcon);
-        }
-    }
-}
-"@
-$p = $env:JCZHL_ICON_SOURCE
-$o = $env:JCZHL_ICON_OUTPUT
-$isDir = [System.IO.Directory]::Exists($p)
-[JczhlShellIcon]::Save($p, $o, $isDir)
-`
-
-	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-Command", ps)
-	cmd.Env = append(os.Environ(),
-		"JCZHL_ICON_SOURCE="+sourcePath,
-		"JCZHL_ICON_OUTPUT="+tempOutput,
-	)
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		HideWindow:    true,
-		CreationFlags: 0x08000000, // CREATE_NO_WINDOW
-	}
-	output, err := cmd.CombinedOutput()
+	img, err := windowsIconImage(sourcePath)
 	if err != nil {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+		return err
+	}
+
+	file, err := os.Create(tempOutput)
+	if err != nil {
+		return err
+	}
+	err = png.Encode(file, img)
+	closeErr := file.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
 	}
 	if info, err := os.Stat(tempOutput); err != nil || info.Size() == 0 {
 		return errors.New("icon extraction produced empty file")
 	}
 	_ = os.Remove(outputPath)
 	return os.Rename(tempOutput, outputPath)
+}
+
+func windowsIconImage(sourcePath string) (*image.RGBA, error) {
+	hIcon, err := shellIconHandle(sourcePath)
+	if err != nil {
+		return nil, err
+	}
+	defer destroyIcon(hIcon)
+	return iconHandleToImage(hIcon, iconPixelSize, iconPixelSize)
+}
+
+func shellIconHandle(sourcePath string) (uintptr, error) {
+	shell32 := syscall.NewLazyDLL("shell32.dll")
+	shGetFileInfo := shell32.NewProc("SHGetFileInfoW")
+
+	pathPtr, err := syscall.UTF16PtrFromString(sourcePath)
+	if err != nil {
+		return 0, err
+	}
+
+	attributes := uint32(fileAttributeNormal)
+	flags := uint32(shgfiIcon | shgfiLargeIcon)
+	if info, err := os.Stat(sourcePath); err == nil {
+		if info.IsDir() {
+			attributes = fileAttributeDirectory
+		} else if info.Mode().Perm()&0200 == 0 {
+			attributes = fileAttributeReadonly
+		}
+	} else {
+		flags |= shgfiUseFileAttributes
+	}
+
+	var fileInfo shFileInfo
+	ret, _, callErr := shGetFileInfo.Call(
+		uintptr(unsafe.Pointer(pathPtr)),
+		uintptr(attributes),
+		uintptr(unsafe.Pointer(&fileInfo)),
+		uintptr(unsafe.Sizeof(fileInfo)),
+		uintptr(flags),
+	)
+	if ret == 0 || fileInfo.hIcon == 0 {
+		if callErr != syscall.Errno(0) {
+			return 0, callErr
+		}
+		return 0, errors.New("SHGetFileInfo failed")
+	}
+	return fileInfo.hIcon, nil
+}
+
+func iconHandleToImage(hIcon uintptr, width int32, height int32) (*image.RGBA, error) {
+	gdi32 := syscall.NewLazyDLL("gdi32.dll")
+	user32 := syscall.NewLazyDLL("user32.dll")
+	createCompatibleDC := gdi32.NewProc("CreateCompatibleDC")
+	createDIBSection := gdi32.NewProc("CreateDIBSection")
+	selectObject := gdi32.NewProc("SelectObject")
+	deleteObject := gdi32.NewProc("DeleteObject")
+	deleteDC := gdi32.NewProc("DeleteDC")
+	drawIconEx := user32.NewProc("DrawIconEx")
+
+	hdc, _, callErr := createCompatibleDC.Call(0)
+	if hdc == 0 {
+		if callErr != syscall.Errno(0) {
+			return nil, callErr
+		}
+		return nil, errors.New("CreateCompatibleDC failed")
+	}
+	defer deleteDC.Call(hdc)
+
+	bitmapInfo := bitmapInfo{
+		bmiHeader: bitmapInfoHeader{
+			biSize:        uint32(unsafe.Sizeof(bitmapInfoHeader{})),
+			biWidth:       width,
+			biHeight:      -height,
+			biPlanes:      1,
+			biBitCount:    32,
+			biCompression: biRGB,
+		},
+	}
+
+	var bits uintptr
+	hBitmap, _, callErr := createDIBSection.Call(
+		hdc,
+		uintptr(unsafe.Pointer(&bitmapInfo)),
+		uintptr(dibRGBColors),
+		uintptr(unsafe.Pointer(&bits)),
+		0,
+		0,
+	)
+	if hBitmap == 0 || bits == 0 {
+		if callErr != syscall.Errno(0) {
+			return nil, callErr
+		}
+		return nil, errors.New("CreateDIBSection failed")
+	}
+	defer deleteObject.Call(hBitmap)
+
+	oldObject, _, _ := selectObject.Call(hdc, hBitmap)
+	if oldObject != 0 {
+		defer selectObject.Call(hdc, oldObject)
+	}
+
+	ret, _, callErr := drawIconEx.Call(
+		hdc,
+		0,
+		0,
+		hIcon,
+		uintptr(width),
+		uintptr(height),
+		0,
+		0,
+		uintptr(diNormal),
+	)
+	if ret == 0 {
+		if callErr != syscall.Errno(0) {
+			return nil, callErr
+		}
+		return nil, errors.New("DrawIconEx failed")
+	}
+
+	pixelCount := int(width * height)
+	raw := unsafe.Slice((*byte)(unsafe.Pointer(bits)), pixelCount*4)
+	img := image.NewRGBA(image.Rect(0, 0, int(width), int(height)))
+	hasAlpha := false
+	for i := 0; i < pixelCount; i++ {
+		src := i * 4
+		dst := i * 4
+		alpha := raw[src+3]
+		if alpha != 0 {
+			hasAlpha = true
+		}
+		img.Pix[dst] = raw[src+2]
+		img.Pix[dst+1] = raw[src+1]
+		img.Pix[dst+2] = raw[src]
+		img.Pix[dst+3] = alpha
+	}
+	if !hasAlpha {
+		for i := 0; i < pixelCount; i++ {
+			dst := i * 4
+			if img.Pix[dst] != 0 || img.Pix[dst+1] != 0 || img.Pix[dst+2] != 0 {
+				img.Pix[dst+3] = 0xff
+			}
+		}
+	}
+	return img, nil
+}
+
+func destroyIcon(hIcon uintptr) {
+	if hIcon == 0 {
+		return
+	}
+	user32 := syscall.NewLazyDLL("user32.dll")
+	destroyIcon := user32.NewProc("DestroyIcon")
+	destroyIcon.Call(hIcon)
 }
 
 func (a *App) GetConfig() (AppConfig, error) {
