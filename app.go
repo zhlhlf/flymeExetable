@@ -153,6 +153,16 @@ func writeConfig(cfg AppConfig) error {
 	return os.WriteFile(path, data, 0644)
 }
 
+func writeItemsCache(items []LauncherItem) {
+	cache, err := itemsCachePath()
+	if err != nil {
+		return
+	}
+	if data, err := json.Marshal(items); err == nil {
+		_ = os.WriteFile(cache, data, 0644)
+	}
+}
+
 func firstLetter(name string) string {
 	for _, r := range name {
 		if unicode.IsSpace(r) {
@@ -275,13 +285,6 @@ func scanFolder(folder string) ([]LauncherItem, error) {
 		return items[i].Letter < items[j].Letter
 	})
 
-	cache, err := itemsCachePath()
-	if err == nil {
-		if data, err := json.MarshalIndent(items, "", "  "); err == nil {
-			_ = os.WriteFile(cache, data, 0644)
-		}
-	}
-
 	return items, nil
 }
 
@@ -315,12 +318,7 @@ func scanFolders(folders []string) ([]LauncherItem, error) {
 		return allItems[i].Letter < allItems[j].Letter
 	})
 
-	cache, err := itemsCachePath()
-	if err == nil {
-		if data, err := json.MarshalIndent(allItems, "", "  "); err == nil {
-			_ = os.WriteFile(cache, data, 0644)
-		}
-	}
+	writeItemsCache(allItems)
 
 	return allItems, nil
 }
@@ -595,7 +593,11 @@ func (a *App) SaveWindowPosition(x int, y int) error {
 }
 
 func (a *App) ScanFolder(folder string) ([]LauncherItem, error) {
-	return scanFolder(folder)
+	items, err := scanFolder(folder)
+	if err == nil {
+		writeItemsCache(items)
+	}
+	return items, err
 }
 
 func (a *App) ScanFolders(folders []string) ([]LauncherItem, error) {

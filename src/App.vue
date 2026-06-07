@@ -1,5 +1,5 @@
 ﻿<script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Quit, WindowGetPosition, WindowSetPosition, WindowSetSize } from '../wailsjs/runtime/runtime'
 import { ChooseFolder, GetConfig, GetIcon, GetTypeIcon, OpenItem, SaveWindowPosition, ScanFolders, SetSettings } from '../wailsjs/go/main/App'
 
@@ -56,6 +56,8 @@ const flyPanelBottomGap = 18
 let currentExpandedWidth = collapsedWidth
 let currentWindowHeight = 86
 const typeIconPromises = new Map<string, Promise<string>>()
+const itemIconPromises = new Map<string, Promise<string>>()
+const fallbackIconUrls = new Map<string, string>()
 
 type GradientTheme = {
   shell: string
@@ -199,7 +201,7 @@ async function refresh() {
       currentWindowHeight = getCollapsedHeight()
       WindowSetSize(collapsedWidth, currentWindowHeight)
     }
-    void loadIcons(items.value)
+    void loadActiveIcons()
   } catch (err) {
     error.value = String(err)
   } finally {
@@ -245,7 +247,12 @@ async function confirmSettings() {
   scheduleCollapse()
 }
 
-async function loadIcons(sourceItems: LauncherItem[]) {
+watch(activeItems, () => {
+  void loadActiveIcons()
+})
+
+async function loadActiveIcons() {
+  const sourceItems = activeItems.value
   for (const item of sourceItems) {
     if (item.icon) continue
     try {
@@ -262,7 +269,17 @@ async function loadIcons(sourceItems: LauncherItem[]) {
 async function loadItemIcon(item: LauncherItem) {
   if (item.isDir) return loadTypeIcon('folder')
   const ext = item.extension.toLowerCase()
-  if (ext === 'lnk' || ext === 'exe') return GetIcon(item.path)
+  if (ext === 'lnk' || ext === 'exe') {
+    let promise = itemIconPromises.get(item.path)
+    if (!promise) {
+      promise = GetIcon(item.path).catch((err) => {
+        itemIconPromises.delete(item.path)
+        throw err
+      })
+      itemIconPromises.set(item.path, promise)
+    }
+    return promise
+  }
   if (!ext) return ''
   return loadTypeIcon(ext)
 }
@@ -377,8 +394,13 @@ function scheduleCollapse() {
 }
 
 function fileIconUrl(kind: string, label: string, color: string) {
+  const cacheKey = `${kind}:${label}:${color}`
+  const cached = fallbackIconUrls.get(cacheKey)
+  if (cached) return cached
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="12" y1="6" x2="52" y2="58"><stop stop-color="${color}"/><stop offset="1" stop-color="#ffffff" stop-opacity=".72"/></linearGradient></defs><path d="M16 8h23l11 11v37H16z" fill="url(#g)" opacity=".96"/><path d="M39 8v12h11" fill="#fff" opacity=".38"/><path d="M21 34h22M21 42h18" stroke="#1b2330" stroke-width="3" stroke-linecap="round" opacity=".54"/><text x="32" y="29" text-anchor="middle" font-family="Segoe UI,Arial" font-size="${kind === 'small' ? 13 : 15}" font-weight="800" fill="#1b2330" opacity=".78">${label}</text></svg>`
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`
+  const url = `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`
+  fallbackIconUrls.set(cacheKey, url)
+  return url
 }
 
 function iconOf(item: LauncherItem) {
