@@ -799,6 +799,43 @@ func shellOpenWindows(path string) error {
 		return errors.New("路径为空")
 	}
 
+	ext := strings.ToLower(filepath.Ext(path))
+
+	// .exe: 使用 CreateProcessW + CREATE_BREAKAWAY_FROM_JOB 彻底脱离启动器进程树
+	if ext == ".exe" {
+		err := createProcessIndependent(path, "", filepath.Dir(path))
+		if err == nil {
+			return nil
+		}
+		// CreateProcess 失败时回退到 ShellExecute
+		ret, shellErr := shellExecuteWindows("open", path, "", "")
+		if shellErr == nil && ret > 32 {
+			return nil
+		}
+		return fmt.Errorf("打开失败：%s（%v）", path, err)
+	}
+
+	// .bat / .cmd: 通过 cmd.exe /c 启动，加上脱离标志
+	if ext == ".bat" || ext == ".cmd" {
+		err := createProcessIndependent("cmd.exe", `/c "`+path+`"`, filepath.Dir(path))
+		if err == nil {
+			return nil
+		}
+		ret, shellErr := shellExecuteWindows("open", "cmd.exe", `/c "`+path+`"`, "")
+		if shellErr == nil && ret > 32 {
+			return nil
+		}
+		return fmt.Errorf("打开失败：%s（%v）", path, err)
+	}
+
+	// .lnk 和其他文档: 优先通过 explorer.exe 中转，让目标应用挂到 explorer 进程树下
+	// explorer.exe 本身是系统常驻进程，不会受启动器影响
+	explorerRet, explorerErr := shellExecuteWindows("open", "explorer.exe", path, "")
+	if explorerErr == nil && explorerRet > 32 {
+		return nil
+	}
+
+	// 回退：直接 ShellExecute（对于已注册文件类型，系统可能会通过 DDE 交给已有进程）
 	ret, err := shellExecuteWindows("open", path, "", "")
 	if err != nil {
 		return err
@@ -807,24 +844,65 @@ func shellOpenWindows(path string) error {
 		return nil
 	}
 
-	if strings.EqualFold(filepath.Ext(path), ".lnk") {
-		explorerRet, explorerErr := shellExecuteWindows("open", "explorer.exe", path, "")
-		if explorerErr == nil {
-			if explorerRet > 32 {
-				return nil
-			}
-		}
-
+	// .lnk 额外尝试提权运行
+	if ext == ".lnk" {
 		runasRet, runasErr := shellExecuteWindows("runas", path, "", "")
-		if runasErr == nil {
-			if runasRet > 32 {
-				return nil
-			}
-			ret = runasRet
+		if runasErr == nil && runasRet > 32 {
+			return nil
 		}
 	}
 
 	return fmt.Errorf("打开失败：%s（ShellExecute 错误码 %d）", path, ret)
+}
+
+// createProcessIndependent 使用 CreateProcessW 启动独立进程
+// CREATE_BREAKAWAY_FROM_JOB: 脱离父进程的 Job Object（WebView2/Wails 会创建）
+// CREATE_NEW_PROCESS_GROUP: 新进程组，不受父进程 Ctrl+C 等信号影响
+func createProcessIndependent(exePath string, args string, workDir string) error {
+	var si syscall.StartupInfo
+	si.Cb = uint32(unsafe.Sizeof(si))
+	var pi syscall.ProcessInformation
+
+	cmdLine := `"` + exePath + `"`
+	if args != "" {
+		cmdLine += " " + args
+	}
+	cmdLinePtr, err := syscall.UTF16PtrFromString(cmdLine)
+	if err != nil {
+		return err
+	}
+
+	var workDirPtr *uint16
+	if workDir != "" {
+		workDirPtr, err = syscall.UTF16PtrFromString(workDir)
+		if err != nil {
+			return err
+		}
+	}
+
+	const (
+		CREATE_NEW_PROCESS_GROUP  = 0x00000200
+		CREATE_BREAKAWAY_FROM_JOB = 0x01000000
+	)
+
+	err = syscall.CreateProcess(
+		nil,
+		cmdLinePtr,
+		nil,
+		nil,
+		false,
+		CREATE_NEW_PROCESS_GROUP|CREATE_BREAKAWAY_FROM_JOB,
+		nil,
+		workDirPtr,
+		&si,
+		&pi,
+	)
+	if err != nil {
+		return err
+	}
+	syscall.CloseHandle(pi.Process)
+	syscall.CloseHandle(pi.Thread)
+	return nil
 }
 
 func shellExecuteWindows(operation string, file string, parameters string, directory string) (uintptr, error) {
