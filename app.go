@@ -226,17 +226,6 @@ func displayName(path string, info os.FileInfo) string {
 	return base
 }
 
-func shouldCollect(path string, info os.FileInfo) bool {
-	name := strings.ToLower(info.Name())
-	if name == "desktop.ini" || name == "thumbs.db" || strings.HasPrefix(name, "~$") {
-		return false
-	}
-	if info.IsDir() {
-		return true
-	}
-	return true
-}
-
 func scanFolder(folder string) ([]LauncherItem, error) {
 	root, err := filepath.Abs(folder)
 	if err != nil {
@@ -248,9 +237,11 @@ func scanFolder(folder string) ([]LauncherItem, error) {
 
 	items := make([]LauncherItem, 0, 128)
 	seenPaths := make(map[string]bool)
+	var errs []string
 	for _, scanRoot := range scanRoots(root) {
 		entries, err := os.ReadDir(scanRoot)
 		if err != nil {
+			errs = append(errs, scanRoot+": "+err.Error())
 			continue
 		}
 
@@ -263,7 +254,11 @@ func scanFolder(folder string) ([]LauncherItem, error) {
 			seenPaths[pathKey] = true
 
 			info, err := entry.Info()
-			if err != nil || !shouldCollect(path, info) {
+			if err != nil {
+				continue
+			}
+			lowerName := strings.ToLower(info.Name())
+			if lowerName == "desktop.ini" || lowerName == "thumbs.db" || strings.HasPrefix(lowerName, "~$") {
 				continue
 			}
 
@@ -286,10 +281,23 @@ func scanFolder(folder string) ([]LauncherItem, error) {
 		return items[i].Letter < items[j].Letter
 	})
 
+	if len(errs) > 0 {
+		return items, fmt.Errorf("scan errors: %s", strings.Join(errs, "; "))
+	}
 	return items, nil
 }
 
 func scanFolders(folders []string) ([]LauncherItem, error) {
+	// Fast path: single folder returns scanFolder result directly (already sorted).
+	if len(folders) == 1 {
+		items, err := scanFolder(strings.TrimSpace(folders[0]))
+		if err != nil {
+			return nil, err
+		}
+		writeItemsCache(items)
+		return items, nil
+	}
+
 	allItems := make([]LauncherItem, 0, 256)
 	seenPaths := make(map[string]bool)
 
@@ -493,6 +501,23 @@ const (
 	iconPixelSize = 32
 )
 
+var (
+	shell32                = syscall.NewLazyDLL("shell32.dll")
+	procSHGetFileInfo      = shell32.NewProc("SHGetFileInfoW")
+	procShellExecute       = shell32.NewProc("ShellExecuteW")
+
+	gdi32                  = syscall.NewLazyDLL("gdi32.dll")
+	procCreateCompatibleDC = gdi32.NewProc("CreateCompatibleDC")
+	procCreateDIBSection   = gdi32.NewProc("CreateDIBSection")
+	procSelectObject       = gdi32.NewProc("SelectObject")
+	procDeleteObject       = gdi32.NewProc("DeleteObject")
+	procDeleteDC           = gdi32.NewProc("DeleteDC")
+
+	user32            = syscall.NewLazyDLL("user32.dll")
+	procDrawIconEx    = user32.NewProc("DrawIconEx")
+	procDestroyIcon   = user32.NewProc("DestroyIcon")
+)
+
 func extractWindowsIcon(sourcePath string, outputPath string) error {
 	if runtime.GOOS != "windows" {
 		return errors.New("only windows is supported")
@@ -538,8 +563,6 @@ func windowsIconImage(sourcePath string) (*image.RGBA, error) {
 }
 
 func shellIconHandle(sourcePath string) (uintptr, error) {
-	shell32 := syscall.NewLazyDLL("shell32.dll")
-	shGetFileInfo := shell32.NewProc("SHGetFileInfoW")
 
 	pathPtr, err := syscall.UTF16PtrFromString(sourcePath)
 	if err != nil {
@@ -559,7 +582,7 @@ func shellIconHandle(sourcePath string) (uintptr, error) {
 	}
 
 	var fileInfo shFileInfo
-	ret, _, callErr := shGetFileInfo.Call(
+	ret, _, callErr := procSHGetFileInfo.Call(
 		uintptr(unsafe.Pointer(pathPtr)),
 		uintptr(attributes),
 		uintptr(unsafe.Pointer(&fileInfo)),
@@ -576,23 +599,15 @@ func shellIconHandle(sourcePath string) (uintptr, error) {
 }
 
 func iconHandleToImage(hIcon uintptr, width int32, height int32) (*image.RGBA, error) {
-	gdi32 := syscall.NewLazyDLL("gdi32.dll")
-	user32 := syscall.NewLazyDLL("user32.dll")
-	createCompatibleDC := gdi32.NewProc("CreateCompatibleDC")
-	createDIBSection := gdi32.NewProc("CreateDIBSection")
-	selectObject := gdi32.NewProc("SelectObject")
-	deleteObject := gdi32.NewProc("DeleteObject")
-	deleteDC := gdi32.NewProc("DeleteDC")
-	drawIconEx := user32.NewProc("DrawIconEx")
 
-	hdc, _, callErr := createCompatibleDC.Call(0)
+	hdc, _, callErr := procCreateCompatibleDC.Call(0)
 	if hdc == 0 {
 		if callErr != syscall.Errno(0) {
 			return nil, callErr
 		}
 		return nil, errors.New("CreateCompatibleDC failed")
 	}
-	defer deleteDC.Call(hdc)
+	defer procDeleteDC.Call(hdc)
 
 	bitmapInfo := bitmapInfo{
 		bmiHeader: bitmapInfoHeader{
@@ -606,7 +621,7 @@ func iconHandleToImage(hIcon uintptr, width int32, height int32) (*image.RGBA, e
 	}
 
 	var bits uintptr
-	hBitmap, _, callErr := createDIBSection.Call(
+	hBitmap, _, callErr := procCreateDIBSection.Call(
 		hdc,
 		uintptr(unsafe.Pointer(&bitmapInfo)),
 		uintptr(dibRGBColors),
@@ -620,14 +635,14 @@ func iconHandleToImage(hIcon uintptr, width int32, height int32) (*image.RGBA, e
 		}
 		return nil, errors.New("CreateDIBSection failed")
 	}
-	defer deleteObject.Call(hBitmap)
+	defer procDeleteObject.Call(hBitmap)
 
-	oldObject, _, _ := selectObject.Call(hdc, hBitmap)
+	oldObject, _, _ := procSelectObject.Call(hdc, hBitmap)
 	if oldObject != 0 {
-		defer selectObject.Call(hdc, oldObject)
+		defer procSelectObject.Call(hdc, oldObject)
 	}
 
-	ret, _, callErr := drawIconEx.Call(
+	ret, _, callErr := procDrawIconEx.Call(
 		hdc,
 		0,
 		0,
@@ -676,9 +691,7 @@ func destroyIcon(hIcon uintptr) {
 	if hIcon == 0 {
 		return
 	}
-	user32 := syscall.NewLazyDLL("user32.dll")
-	destroyIcon := user32.NewProc("DestroyIcon")
-	destroyIcon.Call(hIcon)
+	procDestroyIcon.Call(hIcon)
 }
 
 func (a *App) GetConfig() (AppConfig, error) {
@@ -906,8 +919,6 @@ func createProcessIndependent(exePath string, args string, workDir string) error
 }
 
 func shellExecuteWindows(operation string, file string, parameters string, directory string) (uintptr, error) {
-	shell32 := syscall.NewLazyDLL("shell32.dll")
-	shellExecute := shell32.NewProc("ShellExecuteW")
 	operationPtr, err := syscall.UTF16PtrFromString(operation)
 	if err != nil {
 		return 0, err
@@ -931,7 +942,7 @@ func shellExecuteWindows(operation string, file string, parameters string, direc
 		}
 	}
 
-	ret, _, _ := shellExecute.Call(
+	ret, _, _ := procShellExecute.Call(
 		0,
 		uintptr(unsafe.Pointer(operationPtr)),
 		uintptr(unsafe.Pointer(filePtr)),
