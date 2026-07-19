@@ -1,7 +1,7 @@
 ﻿<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Quit, WindowGetPosition, WindowSetPosition, WindowSetSize } from '../wailsjs/runtime/runtime'
-import { ChooseFolder, GetConfig, GetIcon, GetTypeIcon, OpenItem, SaveWindowPosition, ScanFolders, SetSettings } from '../wailsjs/go/main/App'
+import { ChooseFolder, GetCachedItems, GetConfig, GetIcons, GetTypeIcons, OpenItem, SaveWindowPosition, ScanFolders, SetSettings } from '../wailsjs/go/main/App'
 
 type AppConfig = {
   folder: string | null
@@ -23,6 +23,7 @@ type LauncherItem = {
 }
 
 const letters = ['#', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')]
+const letterSet = new Set(letters)
 const defaultPoem = '鍘诲勾娴锋鐜夋鎯?闀胯褰撳嚖鍑拌'
 const folders = ref<string[]>([])
 const settingsFolders = ref<string[]>([])
@@ -58,6 +59,8 @@ let currentWindowHeight = 86
 const typeIconPromises = new Map<string, Promise<string>>()
 const itemIconPromises = new Map<string, Promise<string>>()
 const fallbackIconUrls = new Map<string, string>()
+let iconLoadToken = 0
+const iconConcurrency = 8
 
 type GradientTheme = {
   shell: string
@@ -110,10 +113,9 @@ function changeGradientTheme() {
 const grouped = computed(() => {
   const result = new Map<string, LauncherItem[]>()
   for (const letter of letters) result.set(letter, [])
-  result.set('#', [])
 
   for (const item of items.value) {
-    const key = letters.includes(item.letter) ? item.letter : '#'
+    const key = letterSet.has(item.letter) ? item.letter : '#'
     result.get(key)?.push(item)
   }
 
@@ -145,7 +147,7 @@ onMounted(async () => {
     settingsPoem.value = poem.value
     if (folders.value.length > 0) {
       booting.value = false
-      await refresh()
+      await bootstrapItems()
       return
     }
     showSettings.value = true
@@ -188,20 +190,64 @@ async function chooseFolder() {
   }
 }
 
+function applyItems(nextItems: LauncherItem[], preferKeepLetter = true) {
+  const previousLetter = activeLetter.value
+  items.value = nextItems
+  const available = visibleLetters.value
+  if (preferKeepLetter && available.includes(previousLetter)) {
+    activeLetter.value = previousLetter
+  } else {
+    activeLetter.value = available[0] ?? 'A'
+  }
+  if (!expanded.value) {
+    currentWindowHeight = getCollapsedHeight()
+    WindowSetSize(collapsedWidth, currentWindowHeight)
+  }
+  void loadActiveIcons()
+}
+
+async function bootstrapItems() {
+  if (!folders.value.length) return
+
+  error.value = ''
+  let usedCache = false
+  try {
+    const cached = await GetCachedItems(folders.value) as LauncherItem[]
+    if (cached?.length) {
+      applyItems(cached, false)
+      usedCache = true
+    }
+  } catch {
+    // ignore cache read failures and continue with live scan
+  }
+
+  if (!usedCache) loading.value = true
+  try {
+    const fresh = await ScanFolders(folders.value) as LauncherItem[]
+    if (!usedCache || itemsFingerprint(fresh) !== itemsFingerprint(items.value)) {
+      applyItems(fresh, usedCache)
+    } else {
+      void loadActiveIcons()
+    }
+  } catch (err) {
+    if (!usedCache) error.value = String(err)
+  } finally {
+    loading.value = false
+  }
+}
+
+function itemsFingerprint(list: LauncherItem[]) {
+  return list.map((item) => item.path + '|' + item.name + '|' + item.letter + '|' + (item.isDir ? '1' : '0') + '|' + item.extension).join('\n')
+}
+
 async function refresh() {
   if (!folders.value.length) return
 
   loading.value = true
   error.value = ''
   try {
-    items.value = await ScanFolders(folders.value) as LauncherItem[]
-    const firstAvailable = visibleLetters.value[0]
-    activeLetter.value = firstAvailable ?? 'A'
-    if (!expanded.value) {
-      currentWindowHeight = getCollapsedHeight()
-      WindowSetSize(collapsedWidth, currentWindowHeight)
-    }
-    void loadActiveIcons()
+    const fresh = await ScanFolders(folders.value) as LauncherItem[]
+    applyItems(fresh, true)
   } catch (err) {
     error.value = String(err)
   } finally {
@@ -251,49 +297,102 @@ watch(activeItems, () => {
   void loadActiveIcons()
 })
 
+function setItemIcon(path: string, icon: string) {
+  if (!icon) return
+  const index = items.value.findIndex((candidate) => candidate.path === path)
+  if (index < 0) return
+  if (items.value[index].icon === icon) return
+  const next = items.value.slice()
+  next[index] = { ...next[index], icon }
+  items.value = next
+}
+
 async function loadActiveIcons() {
-  const sourceItems = activeItems.value
+  const token = ++iconLoadToken
+  const sourceItems = activeItems.value.filter((item) => !item.icon)
+  if (!sourceItems.length) return
+
+  const uniquePaths: string[] = []
+  const pathSeen = new Set<string>()
+  const typeKeys: string[] = []
+  const typeSeen = new Set<string>()
+  const typeOwners = new Map<string, string[]>()
+
   for (const item of sourceItems) {
-    if (item.icon) continue
-    try {
-      const icon = await loadItemIcon(item)
-      if (!icon) continue
-      const current = items.value.find((candidate) => candidate.path === item.path)
-      if (current) current.icon = icon
-    } catch {
-      // Ignore a failed icon and keep the fallback image.
+    if (item.isDir) {
+      if (!typeSeen.has('folder')) {
+        typeSeen.add('folder')
+        typeKeys.push('folder')
+      }
+      const list = typeOwners.get('folder') ?? []
+      list.push(item.path)
+      typeOwners.set('folder', list)
+      continue
     }
-  }
-}
 
-async function loadItemIcon(item: LauncherItem) {
-  if (item.isDir) return loadTypeIcon('folder')
-  const ext = item.extension.toLowerCase()
-  if (ext === 'lnk' || ext === 'exe') {
-    let promise = itemIconPromises.get(item.path)
-    if (!promise) {
-      promise = GetIcon(item.path).catch((err) => {
-        itemIconPromises.delete(item.path)
-        throw err
-      })
-      itemIconPromises.set(item.path, promise)
+    const ext = item.extension.toLowerCase()
+    if (ext === 'lnk' || ext === 'exe') {
+      if (!pathSeen.has(item.path)) {
+        pathSeen.add(item.path)
+        uniquePaths.push(item.path)
+      }
+      continue
     }
-    return promise
-  }
-  if (!ext) return ''
-  return loadTypeIcon(ext)
-}
 
-function loadTypeIcon(ext: string) {
-  let promise = typeIconPromises.get(ext)
-  if (!promise) {
-    promise = GetTypeIcon(ext).catch((err) => {
-      typeIconPromises.delete(ext)
-      throw err
+    if (!ext) continue
+    if (!typeSeen.has(ext)) {
+      typeSeen.add(ext)
+      typeKeys.push(ext)
+    }
+    const list = typeOwners.get(ext) ?? []
+    list.push(item.path)
+    typeOwners.set(ext, list)
+  }
+
+  const tasks: Array<() => Promise<void>> = []
+
+  if (uniquePaths.length) {
+    tasks.push(async () => {
+      try {
+        const icons = await GetIcons(uniquePaths) as Record<string, string>
+        if (token !== iconLoadToken) return
+        for (const [path, icon] of Object.entries(icons || {})) {
+          if (!icon) continue
+          itemIconPromises.set(path, Promise.resolve(icon))
+          setItemIcon(path, icon)
+        }
+      } catch {
+        // ignore batch failures; fallback icons remain
+      }
     })
-    typeIconPromises.set(ext, promise)
   }
-  return promise
+
+  if (typeKeys.length) {
+    tasks.push(async () => {
+      try {
+        const icons = await GetTypeIcons(typeKeys) as Record<string, string>
+        if (token !== iconLoadToken) return
+        for (const [ext, icon] of Object.entries(icons || {})) {
+          if (!icon) continue
+          typeIconPromises.set(ext, Promise.resolve(icon))
+          const owners = typeOwners.get(ext) ?? []
+          for (const path of owners) setItemIcon(path, icon)
+        }
+      } catch {
+        // ignore batch failures; fallback icons remain
+      }
+    })
+  }
+
+  let cursor = 0
+  async function worker() {
+    while (cursor < tasks.length) {
+      const current = cursor++
+      await tasks[current]()
+    }
+  }
+  const workers = Array.from({ length: Math.min(iconConcurrency, Math.max(tasks.length, 1)) }, () => worker())
+  await Promise.all(workers)
 }
 
 async function openItem(item: LauncherItem) {

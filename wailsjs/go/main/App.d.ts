@@ -4,11 +4,19 @@ import {main} from '../models';
 
 export function ChooseFolder():Promise<string>;
 
+export function GetCachedItems(arg1:Array<string>):Promise<Array<main.LauncherItem>>;
+
 export function GetConfig():Promise<main.AppConfig>;
 
 export function GetIcon(arg1:string):Promise<string>;
 
+export function GetIcons(arg1:Array<string>):Promise<Record<string, string>>;
+
 export function GetTypeIcon(arg1:string):Promise<string>;
+
+export function GetTypeIcons(arg1:Array<string>):Promise<Record<string, string>>;
+
+export function HideWindow():Promise<void>;
 
 export function OpenItem(arg1:string):Promise<void>;
 
@@ -23,3 +31,5 @@ export function SetFolder(arg1:string):Promise<main.AppConfig>;
 export function SetFolders(arg1:Array<string>):Promise<main.AppConfig>;
 
 export function SetSettings(arg1:Array<string>,arg2:string):Promise<main.AppConfig>;
+
+export function ShowWindow():Promise<void>;

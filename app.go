@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"unicode"
 	"unsafe"
@@ -45,6 +46,27 @@ type LauncherItem struct {
 	Extension string `json:"extension"`
 	IsDir     bool   `json:"isDir"`
 	Icon      string `json:"icon"`
+}
+
+type itemsCacheFile struct {
+	Version int            `json:"version"`
+	Folders []string       `json:"folders"`
+	Items   []LauncherItem `json:"items"`
+}
+
+var (
+	iconDataURLCache     sync.Map
+	typeIconDataURLCache sync.Map
+	iconExtractLocks     sync.Map
+)
+
+func iconExtractLock(key string) *sync.Mutex {
+	if v, ok := iconExtractLocks.Load(key); ok {
+		return v.(*sync.Mutex)
+	}
+	mu := &sync.Mutex{}
+	actual, _ := iconExtractLocks.LoadOrStore(key, mu)
+	return actual.(*sync.Mutex)
 }
 
 func NewApp() *App {
@@ -154,14 +176,69 @@ func writeConfig(cfg AppConfig) error {
 	return os.WriteFile(path, data, 0644)
 }
 
-func writeItemsCache(items []LauncherItem) {
+func writeItemsCache(folders []string, items []LauncherItem) {
 	cache, err := itemsCachePath()
 	if err != nil {
 		return
 	}
-	if data, err := json.Marshal(items); err == nil {
+	payload := itemsCacheFile{
+		Version: 2,
+		Folders: append([]string(nil), folders...),
+		Items:   items,
+	}
+	if data, err := json.Marshal(payload); err == nil {
 		_ = os.WriteFile(cache, data, 0644)
 	}
+}
+
+func readItemsCache() (itemsCacheFile, error) {
+	path, err := itemsCachePath()
+	if err != nil {
+		return itemsCacheFile{}, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return itemsCacheFile{}, err
+	}
+
+	var typed itemsCacheFile
+	if err := json.Unmarshal(data, &typed); err == nil && (typed.Version > 0 || len(typed.Folders) > 0 || len(typed.Items) > 0) {
+		for i := range typed.Items {
+			typed.Items[i].Icon = ""
+		}
+		return typed, nil
+	}
+
+	var legacy []LauncherItem
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		return itemsCacheFile{}, err
+	}
+	for i := range legacy {
+		legacy[i].Icon = ""
+	}
+	return itemsCacheFile{Version: 1, Items: legacy}, nil
+}
+
+func foldersMatch(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	left := make([]string, len(a))
+	right := make([]string, len(b))
+	copy(left, a)
+	copy(right, b)
+	for i := range left {
+		left[i] = strings.ToLower(filepath.Clean(left[i]))
+		right[i] = strings.ToLower(filepath.Clean(right[i]))
+	}
+	sort.Strings(left)
+	sort.Strings(right)
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func firstLetter(name string) string {
@@ -183,18 +260,10 @@ func firstLetter(name string) string {
 	return "#"
 }
 
-func chinesePinyinInitial(r rune) (string, bool) {
-	if r < '\u4e00' || r > '\u9fff' {
-		return "", false
-	}
-
-	encoded, err := simplifiedchinese.GBK.NewEncoder().String(string(r))
-	if err != nil || len(encoded) < 2 {
-		return "#", true
-	}
-
-	code := int(encoded[0])<<8 + int(encoded[1])
-	ranges := []struct {
+var (
+	gbkEncoderMu sync.Mutex
+	gbkEncoder   = simplifiedchinese.GBK.NewEncoder()
+	pinyinRanges = []struct {
 		start   int
 		initial string
 	}{
@@ -205,10 +274,24 @@ func chinesePinyinInitial(r rune) (string, bool) {
 		{0xC8BB, "R"}, {0xC8F6, "S"}, {0xCBFA, "T"}, {0xCDDA, "W"},
 		{0xCEF4, "X"}, {0xD1B9, "Y"}, {0xD4D1, "Z"},
 	}
+)
 
-	for i := len(ranges) - 1; i >= 0; i-- {
-		if code >= ranges[i].start {
-			return ranges[i].initial, true
+func chinesePinyinInitial(r rune) (string, bool) {
+	if r < '一' || r > '鿿' {
+		return "", false
+	}
+
+	gbkEncoderMu.Lock()
+	encoded, err := gbkEncoder.String(string(r))
+	gbkEncoderMu.Unlock()
+	if err != nil || len(encoded) < 2 {
+		return "#", true
+	}
+
+	code := int(encoded[0])<<8 + int(encoded[1])
+	for i := len(pinyinRanges) - 1; i >= 0; i-- {
+		if code >= pinyinRanges[i].start {
+			return pinyinRanges[i].initial, true
 		}
 	}
 	return "#", true
@@ -288,29 +371,53 @@ func scanFolder(folder string) ([]LauncherItem, error) {
 }
 
 func scanFolders(folders []string) ([]LauncherItem, error) {
-	// Fast path: single folder returns scanFolder result directly (already sorted).
-	if len(folders) == 1 {
-		items, err := scanFolder(strings.TrimSpace(folders[0]))
+	cleaned := make([]string, 0, len(folders))
+	for _, folder := range folders {
+		folder = strings.TrimSpace(folder)
+		if folder != "" {
+			cleaned = append(cleaned, folder)
+		}
+	}
+	if len(cleaned) == 0 {
+		return []LauncherItem{}, nil
+	}
+
+	if len(cleaned) == 1 {
+		items, err := scanFolder(cleaned[0])
 		if err != nil {
 			return nil, err
 		}
-		writeItemsCache(items)
+		writeItemsCache(normalizeFolders(cleaned), items)
 		return items, nil
 	}
 
+	type scanResult struct {
+		items []LauncherItem
+		err   error
+	}
+	results := make([]scanResult, len(cleaned))
+	var wg sync.WaitGroup
+	wg.Add(len(cleaned))
+	for i, folder := range cleaned {
+		go func(i int, folder string) {
+			defer wg.Done()
+			items, err := scanFolder(folder)
+			results[i] = scanResult{items: items, err: err}
+		}(i, folder)
+	}
+	wg.Wait()
+
 	allItems := make([]LauncherItem, 0, 256)
 	seenPaths := make(map[string]bool)
-
-	for _, folder := range folders {
-		folder = strings.TrimSpace(folder)
-		if folder == "" {
+	var firstErr error
+	for _, result := range results {
+		if result.err != nil {
+			if firstErr == nil {
+				firstErr = result.err
+			}
 			continue
 		}
-		items, err := scanFolder(folder)
-		if err != nil {
-			continue
-		}
-		for _, item := range items {
+		for _, item := range result.items {
 			key := strings.ToLower(filepath.Clean(item.Path))
 			if seenPaths[key] {
 				continue
@@ -327,8 +434,10 @@ func scanFolders(folders []string) ([]LauncherItem, error) {
 		return allItems[i].Letter < allItems[j].Letter
 	})
 
-	writeItemsCache(allItems)
-
+	writeItemsCache(normalizeFolders(cleaned), allItems)
+	if len(allItems) == 0 && firstErr != nil {
+		return nil, firstErr
+	}
 	return allItems, nil
 }
 
@@ -411,9 +520,26 @@ func folderIconSamplePath() (string, error) {
 }
 
 func iconDataURL(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	cacheKey := strings.ToLower(filepath.Clean(path))
+	if cached, ok := iconDataURLCache.Load(cacheKey); ok {
+		return cached.(string)
+	}
+
 	cache, err := iconCachePath(path)
 	if err != nil {
 		return ""
+	}
+
+	mu := iconExtractLock(cache)
+	mu.Lock()
+	defer mu.Unlock()
+
+	if cached, ok := iconDataURLCache.Load(cacheKey); ok {
+		return cached.(string)
 	}
 
 	if info, err := os.Stat(cache); err != nil || info.Size() == 0 {
@@ -427,22 +553,40 @@ func iconDataURL(path string) string {
 	if err != nil || len(data) == 0 {
 		return ""
 	}
-	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(data)
+	url := "data:image/png;base64," + base64.StdEncoding.EncodeToString(data)
+	iconDataURLCache.Store(cacheKey, url)
+	return url
 }
 
 func typeIconDataURL(ext string) string {
-	cache, err := typeIconCachePath(ext)
+	key := normalizeExtension(ext)
+	if key == "" || strings.EqualFold(strings.TrimSpace(ext), "folder") {
+		key = "folder"
+	}
+	if cached, ok := typeIconDataURLCache.Load(key); ok {
+		return cached.(string)
+	}
+
+	cache, err := typeIconCachePath(key)
 	if err != nil {
 		return ""
+	}
+
+	mu := iconExtractLock("type:" + cache)
+	mu.Lock()
+	defer mu.Unlock()
+
+	if cached, ok := typeIconDataURLCache.Load(key); ok {
+		return cached.(string)
 	}
 
 	if info, err := os.Stat(cache); err != nil || info.Size() == 0 {
 		_ = os.Remove(cache)
 		var sample string
-		if normalizeExtension(ext) == "folder" {
+		if key == "folder" {
 			sample, err = folderIconSamplePath()
 		} else {
-			sample, err = typeIconSamplePath(ext)
+			sample, err = typeIconSamplePath(key)
 		}
 		if err != nil {
 			return ""
@@ -456,7 +600,9 @@ func typeIconDataURL(ext string) string {
 	if err != nil || len(data) == 0 {
 		return ""
 	}
-	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(data)
+	url := "data:image/png;base64," + base64.StdEncoding.EncodeToString(data)
+	typeIconDataURLCache.Store(key, url)
+	return url
 }
 
 type shFileInfo struct {
@@ -753,9 +899,27 @@ func (a *App) SaveWindowPosition(x int, y int) error {
 func (a *App) ScanFolder(folder string) ([]LauncherItem, error) {
 	items, err := scanFolder(folder)
 	if err == nil {
-		writeItemsCache(items)
+		writeItemsCache(normalizeFolders([]string{folder}), items)
 	}
 	return items, err
+}
+
+func (a *App) GetCachedItems(folders []string) ([]LauncherItem, error) {
+	cleaned := normalizeFolders(folders)
+	if len(cleaned) == 0 {
+		return []LauncherItem{}, nil
+	}
+	cache, err := readItemsCache()
+	if err != nil {
+		return []LauncherItem{}, nil
+	}
+	if cache.Version >= 2 && !foldersMatch(cache.Folders, cleaned) {
+		return []LauncherItem{}, nil
+	}
+	if cache.Items == nil {
+		return []LauncherItem{}, nil
+	}
+	return cache.Items, nil
 }
 
 func (a *App) ScanFolders(folders []string) ([]LauncherItem, error) {
@@ -798,6 +962,101 @@ func (a *App) GetTypeIcon(ext string) (string, error) {
 		return "", errors.New("only windows is supported")
 	}
 	return typeIconDataURL(ext), nil
+}
+
+func (a *App) GetIcons(paths []string) (map[string]string, error) {
+	if runtime.GOOS != "windows" {
+		return nil, errors.New("only windows is supported")
+	}
+	result := make(map[string]string, len(paths))
+	if len(paths) == 0 {
+		return result, nil
+	}
+
+	uniq := make([]string, 0, len(paths))
+	seen := make(map[string]bool, len(paths))
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		key := strings.ToLower(filepath.Clean(path))
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		uniq = append(uniq, path)
+	}
+
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 6)
+	for _, path := range uniq {
+		wg.Add(1)
+		go func(path string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			url := iconDataURL(path)
+			if url == "" {
+				return
+			}
+			mu.Lock()
+			result[path] = url
+			mu.Unlock()
+		}(path)
+	}
+	wg.Wait()
+	return result, nil
+}
+
+func (a *App) GetTypeIcons(exts []string) (map[string]string, error) {
+	if runtime.GOOS != "windows" {
+		return nil, errors.New("only windows is supported")
+	}
+	result := make(map[string]string, len(exts))
+	if len(exts) == 0 {
+		return result, nil
+	}
+
+	uniq := make([]string, 0, len(exts))
+	seen := make(map[string]bool, len(exts))
+	for _, ext := range exts {
+		key := normalizeExtension(ext)
+		if key == "" {
+			if strings.EqualFold(strings.TrimSpace(ext), "folder") {
+				key = "folder"
+			} else {
+				continue
+			}
+		}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		uniq = append(uniq, key)
+	}
+
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 6)
+	for _, ext := range uniq {
+		wg.Add(1)
+		go func(ext string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			url := typeIconDataURL(ext)
+			if url == "" {
+				return
+			}
+			mu.Lock()
+			result[ext] = url
+			mu.Unlock()
+		}(ext)
+	}
+	wg.Wait()
+	return result, nil
 }
 
 func (a *App) OpenItem(path string) error {

@@ -40,7 +40,7 @@ func main() {
 			DisableFramelessWindowDecorations: true,
 			DisableWindowIcon:                 true,
 			WebviewUserDataPath:               webviewDataPath,
-			WebviewGpuIsDisabled:              true,
+			WebviewGpuIsDisabled:              false,
 		},
 		OnStartup: app.startup,
 		Bind: []interface{}{

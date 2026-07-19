@@ -6,6 +6,10 @@ export function ChooseFolder() {
   return window['go']['main']['App']['ChooseFolder']();
 }
 
+export function GetCachedItems(arg1) {
+  return window['go']['main']['App']['GetCachedItems'](arg1);
+}
+
 export function GetConfig() {
   return window['go']['main']['App']['GetConfig']();
 }
@@ -14,8 +18,20 @@ export function GetIcon(arg1) {
   return window['go']['main']['App']['GetIcon'](arg1);
 }
 
+export function GetIcons(arg1) {
+  return window['go']['main']['App']['GetIcons'](arg1);
+}
+
 export function GetTypeIcon(arg1) {
   return window['go']['main']['App']['GetTypeIcon'](arg1);
+}
+
+export function GetTypeIcons(arg1) {
+  return window['go']['main']['App']['GetTypeIcons'](arg1);
+}
+
+export function HideWindow() {
+  return window['go']['main']['App']['HideWindow']();
 }
 
 export function OpenItem(arg1) {
@@ -44,4 +60,8 @@ export function SetFolders(arg1) {
 
 export function SetSettings(arg1, arg2) {
   return window['go']['main']['App']['SetSettings'](arg1, arg2);
+}
+
+export function ShowWindow() {
+  return window['go']['main']['App']['ShowWindow']();
 }
