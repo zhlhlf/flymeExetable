@@ -1066,6 +1066,50 @@ func (a *App) OpenItem(path string) error {
 	return shellOpenWindows(path)
 }
 
+// OpenItemLocation opens File Explorer and selects the given file or folder.
+func (a *App) OpenItemLocation(path string) error {
+	if runtime.GOOS != "windows" {
+		return errors.New("only windows is supported")
+	}
+	return shellRevealInExplorer(path)
+}
+
+func shellRevealInExplorer(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return errors.New("路径为空")
+	}
+
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = path
+	}
+	if _, err := os.Stat(abs); err != nil {
+		return fmt.Errorf("路径不存在：%s", abs)
+	}
+
+	// explorer /select,"C:\path\to\item" — 打开所在目录并选中该项
+	params := `/select,"` + abs + `"`
+	ret, err := shellExecuteWindows("open", "explorer.exe", params, "")
+	if err == nil && ret > 32 {
+		return nil
+	}
+
+	// 回退：至少打开父目录
+	parent := filepath.Dir(abs)
+	if info, statErr := os.Stat(abs); statErr == nil && info.IsDir() {
+		parent = abs
+	}
+	ret, err = shellExecuteWindows("open", "explorer.exe", parent, "")
+	if err != nil {
+		return err
+	}
+	if ret > 32 {
+		return nil
+	}
+	return fmt.Errorf("打开所在位置失败：%s（ShellExecute 错误码 %d）", abs, ret)
+}
+
 func shellOpenWindows(path string) error {
 	if strings.TrimSpace(path) == "" {
 		return errors.New("路径为空")

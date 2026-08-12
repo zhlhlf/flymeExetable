@@ -1,7 +1,7 @@
 ﻿<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Quit, WindowGetPosition, WindowSetPosition, WindowSetSize } from '../wailsjs/runtime/runtime'
-import { ChooseFolder, GetCachedItems, GetConfig, GetIcons, GetTypeIcons, OpenItem, SaveWindowPosition, ScanFolders, SetSettings } from '../wailsjs/go/main/App'
+import { ChooseFolder, GetCachedItems, GetConfig, GetIcons, GetTypeIcons, OpenItem, OpenItemLocation, SaveWindowPosition, ScanFolders, SetSettings } from '../wailsjs/go/main/App'
 
 type AppConfig = {
   folder: string | null
@@ -399,6 +399,17 @@ async function openItem(item: LauncherItem) {
   await OpenItem(item.path)
 }
 
+async function revealItem(item: LauncherItem, event?: MouseEvent) {
+  event?.preventDefault()
+  event?.stopPropagation()
+  cancelCollapse()
+  try {
+    await OpenItemLocation(item.path)
+  } catch (err) {
+    error.value = String(err)
+  }
+}
+
 async function openItemOnHover(item: LauncherItem) {
   if (hoverOpenedPath.value === item.path) return
   hoverOpenedPath.value = item.path
@@ -558,7 +569,14 @@ function quitApp() {
         <div v-if="error" class="fly-empty">{{ error }}</div>
         <div v-else-if="!activeItems.length" class="fly-empty">暂无</div>
         <template v-else>
-          <button v-for="item in activeItems" :key="`fly-${item.path}`" class="fly-item" @click="openItem(item)">
+          <button
+            v-for="item in activeItems"
+            :key="`fly-${item.path}`"
+            class="fly-item"
+            title="左键打开 · 右键打开所在位置"
+            @click="openItem(item)"
+            @contextmenu="revealItem(item, $event)"
+          >
             <span class="fly-icon">
               <img v-if="item.icon" :src="item.icon" :alt="item.name" />
               <img v-else :src="iconOf(item)" :alt="item.extension || item.name" />
