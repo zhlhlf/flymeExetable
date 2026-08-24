@@ -42,7 +42,7 @@ jobs:
       run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
 
     - name: Build Wails app
-      run: wails build -platform windows/amd64
+      run: node scripts/prepare-wails-icon.mjs && wails build -platform windows/amd64
 
     - name: Prepare release tag
       id: vars
