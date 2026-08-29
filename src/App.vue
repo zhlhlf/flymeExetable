@@ -1,7 +1,8 @@
 ﻿<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Quit, WindowGetPosition, WindowSetPosition, WindowSetSize } from '../wailsjs/runtime/runtime'
+import { Quit, ScreenGetAll, WindowGetPosition, WindowSetPosition, WindowSetSize } from '../wailsjs/runtime/runtime'
 import { ChooseFolder, GetCachedItems, GetConfig, GetIcons, GetTypeIcons, OpenItem, OpenItemLocation, SaveWindowPosition, ScanFolders, SetSettings } from '../wailsjs/go/main/App'
+import appIcon from '../appicon-rounded.png'
 
 type AppConfig = {
   folder: string | null
@@ -51,6 +52,8 @@ let lastSavedPosition = ''
 
 const collapsedWidth = 58
 const expandedWidth = 360
+const setupWidth = 392
+const setupHeight = 500
 const minExpandedHeight = 520
 const maxExpandedHeight = 920
 const flyPanelHeight = 318
@@ -140,24 +143,25 @@ const sidePoemLines = computed(() => {
 onMounted(async () => {
   try {
     const config = await GetConfig() as AppConfig
-    currentWindowHeight = getCollapsedHeight()
     const initialPosition = config.windowPosition ?? await WindowGetPosition()
     collapsedPosition = { x: initialPosition.x, y: initialPosition.y }
     lastSavedPosition = config.windowPosition ? positionKey(collapsedPosition) : ''
-    WindowSetSize(collapsedWidth, currentWindowHeight)
-    WindowSetPosition(collapsedPosition.x, collapsedPosition.y)
-    startPositionRecorder()
     poem.value = config.poem?.trim() || defaultPoem
     folders.value = normalizeFolderList(config.folders?.length ? config.folders : (config.folder ? [config.folder] : []))
     settingsFolders.value = [...folders.value]
     settingsPoem.value = poem.value
     if (folders.value.length > 0) {
+      currentWindowHeight = getCollapsedHeight()
+      WindowSetSize(collapsedWidth, currentWindowHeight)
+      WindowSetPosition(collapsedPosition.x, collapsedPosition.y)
+      startPositionRecorder()
       booting.value = false
       await bootstrapItems()
       return
     }
     showSettings.value = true
-    await expandWindow()
+    await openSetupWindow(true)
+    startPositionRecorder()
   } catch (err) {
     error.value = String(err)
   } finally {
@@ -218,11 +222,9 @@ function startPositionRecorder() {
 async function chooseFolder() {
   cancelCollapse()
   showSettings.value = true
-  await expandWindow()
   choosingFolder.value = true
   try {
     const selected = await ChooseFolder()
-    await expandWindow()
     if (!selected) return
 
     const nextFolders = normalizeFolderList([...settingsFolders.value, selected])
@@ -234,7 +236,6 @@ async function chooseFolder() {
     if (folders.value.length > 0) await refresh()
   } finally {
     choosingFolder.value = false
-    await expandWindow()
     cancelCollapse()
   }
 }
@@ -319,7 +320,7 @@ function normalizeFolderList(source: string[]) {
 }
 
 async function openSettings() {
-  await expandWindow()
+  await openSetupWindow(true)
   cancelCollapse()
   settingsFolders.value = [...folders.value]
   settingsPoem.value = poem.value
@@ -490,6 +491,35 @@ function getExpandedHeight() {
   return Math.min(Math.max(heightForLastBubble, minExpandedHeight), maxExpandedHeight)
 }
 
+async function getCurrentScreenSize() {
+  try {
+    const screens = await ScreenGetAll()
+    const screen = screens.find((item) => item.isCurrent) ?? screens.find((item) => item.isPrimary) ?? screens[0]
+    if (screen?.width && screen?.height) return { width: screen.width, height: screen.height }
+  } catch {
+    // Ignore screen lookup failures.
+  }
+  return { width: window.screen.availWidth || 1280, height: window.screen.availHeight || 720 }
+}
+
+async function openSetupWindow(center = false) {
+  clearCollapseTimer()
+  collapseToken++
+  const width = setupWidth
+  const height = setupHeight
+  const screen = await getCurrentScreenSize()
+  const fallbackX = Math.max(16, Math.round((screen.width - width) / 2))
+  const fallbackY = Math.max(16, Math.round((screen.height - height) / 2))
+  const anchor = center ? { x: fallbackX, y: fallbackY } : (collapsedPosition ?? await WindowGetPosition())
+  const x = Math.min(Math.max(anchor.x, 12), Math.max(12, screen.width - width - 12))
+  const y = Math.min(Math.max(anchor.y, 12), Math.max(12, screen.height - height - 12))
+  WindowSetSize(width, height)
+  WindowSetPosition(x, y)
+  currentExpandedWidth = width
+  currentWindowHeight = height
+  expanded.value = true
+}
+
 function clearCollapseTimer() {
   if (collapseTimer) {
     window.clearTimeout(collapseTimer)
@@ -594,10 +624,18 @@ function quitApp() {
 
     <section v-if="booting" class="empty glass-card booting">正在读取本地配置...</section>
 
-    <section v-else-if="showSettings || !hasFolders" class="setup glass-card">
-      <div class="setup-orb">A-Z</div>
-      <h2>{{ hasFolders ? '启动器设置' : '首次运行需要指定文件夹' }}</h2>
-      <p>可以添加多个目录，程序会合并扫描这些目录的当前层内容。</p>
+    <section v-else-if="showSettings || !hasFolders" class="setup glass-card" :class="{ 'is-first-run': !hasFolders }">
+      <button class="setup-close" title="退出" @click="quitApp">×</button>
+      <div class="setup-panel-head">
+        <div class="setup-icon">
+          <img :src="appIcon" alt="jczhl Flyme Launcher" />
+        </div>
+        <div>
+          <div class="setup-kicker">{{ hasFolders ? 'Preferences' : 'First Launch' }}</div>
+          <h2>{{ hasFolders ? '启动器设置' : '选择扫描目录' }}</h2>
+        </div>
+      </div>
+      <p>{{ hasFolders ? '管理目录和底部诗句，保存后会重新扫描。' : '添加一个或多个目录，启动器只合并扫描这些目录的当前层内容。' }}</p>
       <div class="settings-list">
         <div v-if="!settingsFolders.length" class="settings-empty">还没有选择目录</div>
         <div v-for="(settingFolder, index) in settingsFolders" :key="settingFolder" class="settings-row">

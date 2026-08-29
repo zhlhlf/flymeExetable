@@ -13,6 +13,13 @@ import (
 //go:embed all:dist
 var assets embed.FS
 
+const (
+	collapsedWindowWidth  = 58
+	collapsedWindowHeight = 120
+	setupWindowWidth      = 392
+	setupWindowHeight     = 500
+)
+
 func main() {
 	lock, ok, err := acquireSingleInstanceLock()
 	if err != nil {
@@ -25,6 +32,13 @@ func main() {
 	defer lock.Release()
 
 	app := NewApp()
+	windowWidth := collapsedWindowWidth
+	windowHeight := collapsedWindowHeight
+	if cfg, err := readConfig(); err == nil && len(cfg.Folders) == 0 {
+		windowWidth = setupWindowWidth
+		windowHeight = setupWindowHeight
+	}
+
 	webviewDataPath := ""
 	if dir, err := storeDir(); err == nil {
 		webviewDataPath = filepath.Join(dir, "webview")
@@ -32,8 +46,8 @@ func main() {
 
 	err = wails.Run(&options.App{
 		Title:            "jczhl Filyme Launcher",
-		Width:            58,
-		Height:           120,
+		Width:            windowWidth,
+		Height:           windowHeight,
 		MinWidth:         52,
 		MinHeight:        72,
 		Frameless:        true,
