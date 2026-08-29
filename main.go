@@ -14,13 +14,23 @@ import (
 var assets embed.FS
 
 func main() {
+	lock, ok, err := acquireSingleInstanceLock()
+	if err != nil {
+		println("Error:", err.Error())
+		return
+	}
+	if !ok {
+		return
+	}
+	defer lock.Release()
+
 	app := NewApp()
 	webviewDataPath := ""
 	if dir, err := storeDir(); err == nil {
 		webviewDataPath = filepath.Join(dir, "webview")
 	}
 
-	err := wails.Run(&options.App{
+	err = wails.Run(&options.App{
 		Title:            "jczhl Filyme Launcher",
 		Width:            58,
 		Height:           120,

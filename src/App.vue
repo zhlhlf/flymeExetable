@@ -41,8 +41,13 @@ const expanded = ref(false)
 const dockFocused = ref(false)
 const choosingFolder = ref(false)
 let collapseTimer = 0
+let savePositionTimer = 0
 let collapsedPosition: { x: number, y: number } | null = null
 let expanding = false
+let collapseToken = 0
+let savingPosition = false
+let pendingPosition: { x: number, y: number } | null = null
+let lastSavedPosition = ''
 
 const collapsedWidth = 58
 const expandedWidth = 360
@@ -136,11 +141,12 @@ onMounted(async () => {
   try {
     const config = await GetConfig() as AppConfig
     currentWindowHeight = getCollapsedHeight()
+    const initialPosition = config.windowPosition ?? await WindowGetPosition()
+    collapsedPosition = { x: initialPosition.x, y: initialPosition.y }
+    lastSavedPosition = config.windowPosition ? positionKey(collapsedPosition) : ''
     WindowSetSize(collapsedWidth, currentWindowHeight)
-    if (config.windowPosition) {
-      collapsedPosition = { x: config.windowPosition.x, y: config.windowPosition.y }
-      WindowSetPosition(config.windowPosition.x, config.windowPosition.y)
-    }
+    WindowSetPosition(collapsedPosition.x, collapsedPosition.y)
+    startPositionRecorder()
     poem.value = config.poem?.trim() || defaultPoem
     folders.value = normalizeFolderList(config.folders?.length ? config.folders : (config.folder ? [config.folder] : []))
     settingsFolders.value = [...folders.value]
@@ -151,10 +157,7 @@ onMounted(async () => {
       return
     }
     showSettings.value = true
-    currentExpandedWidth = expandedWidth
-    currentWindowHeight = getExpandedHeight()
-    WindowSetSize(currentExpandedWidth, currentWindowHeight)
-    expanded.value = true
+    await expandWindow()
   } catch (err) {
     error.value = String(err)
   } finally {
@@ -164,7 +167,53 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   if (collapseTimer) window.clearTimeout(collapseTimer)
+  if (savePositionTimer) window.clearInterval(savePositionTimer)
 })
+
+function positionKey(position: { x: number, y: number }) {
+  return `${position.x},${position.y}`
+}
+
+async function saveCollapsedPosition(position: { x: number, y: number }) {
+  const key = positionKey(position)
+  collapsedPosition = { x: position.x, y: position.y }
+  if (key === lastSavedPosition) return
+  pendingPosition = { x: position.x, y: position.y }
+  if (savingPosition) return
+
+  savingPosition = true
+  try {
+    while (pendingPosition) {
+      const next = pendingPosition
+      pendingPosition = null
+      const nextKey = positionKey(next)
+      if (nextKey === lastSavedPosition) continue
+      try {
+        await SaveWindowPosition(next.x, next.y)
+        lastSavedPosition = nextKey
+      } catch {
+        pendingPosition = next
+        return
+      }
+    }
+  } finally {
+    savingPosition = false
+  }
+}
+
+function startPositionRecorder() {
+  if (savePositionTimer) return
+  savePositionTimer = window.setInterval(async () => {
+    if (expanded.value || showSettings.value || choosingFolder.value) return
+    try {
+      const position = await WindowGetPosition()
+      if (expanded.value || showSettings.value || choosingFolder.value) return
+      await saveCollapsedPosition(position)
+    } catch {
+      // Ignore position polling failures.
+    }
+  }, 1000)
+}
 
 async function chooseFolder() {
   cancelCollapse()
@@ -441,16 +490,28 @@ function getExpandedHeight() {
   return Math.min(Math.max(heightForLastBubble, minExpandedHeight), maxExpandedHeight)
 }
 
+function clearCollapseTimer() {
+  if (collapseTimer) {
+    window.clearTimeout(collapseTimer)
+    collapseTimer = 0
+  }
+}
+
 async function expandWindow(width = expandedWidth) {
-  if (collapseTimer) window.clearTimeout(collapseTimer)
+  clearCollapseTimer()
+  collapseToken++
   if (expanding) return
+
   expanding = true
   try {
     const wasCollapsed = !expanded.value
-    if (!expanded.value) {
-      collapsedPosition = await WindowGetPosition()
+    if (wasCollapsed) {
+      const position = await WindowGetPosition()
+      collapsedPosition = { x: position.x, y: position.y }
     }
+
     const anchor = collapsedPosition ?? await WindowGetPosition()
+
     const collapsedHeight = getCollapsedHeight()
     const expandedHeight = getExpandedHeight()
     const rightEdge = anchor.x + collapsedWidth
@@ -463,27 +524,28 @@ async function expandWindow(width = expandedWidth) {
     expanded.value = true
     if (wasCollapsed) changeGradientTheme()
   } catch {
-    // 蹇界暐绐楀彛鎵╁睍澶辫触銆?
+    // Ignore window expansion failures.
   } finally {
     expanding = false
   }
 }
 
 function cancelCollapse() {
-  if (collapseTimer) {
-    window.clearTimeout(collapseTimer)
-    collapseTimer = 0
-  }
+  collapseToken++
+  clearCollapseTimer()
 }
 
 function scheduleCollapse() {
   if (showSettings.value || choosingFolder.value) return
   dockFocused.value = false
-  cancelCollapse()
+  clearCollapseTimer()
+  const token = ++collapseToken
   collapseTimer = window.setTimeout(async () => {
-    if (!expanded.value) return
+    collapseTimer = 0
+    if (token !== collapseToken || !expanded.value) return
     try {
       const anchor = collapsedPosition ?? await WindowGetPosition()
+      if (token !== collapseToken || !expanded.value) return
       const collapsedHeight = getCollapsedHeight()
       const rightEdge = anchor.x + collapsedWidth
       WindowSetSize(collapsedWidth, collapsedHeight)
@@ -493,8 +555,9 @@ function scheduleCollapse() {
       currentWindowHeight = collapsedHeight
       collapsedPosition = { x: anchor.x, y: anchor.y }
       changeGradientTheme()
-      await SaveWindowPosition(anchor.x, anchor.y)
+      await saveCollapsedPosition(anchor)
     } catch {
+      if (token !== collapseToken) return
       expanded.value = false
       currentExpandedWidth = collapsedWidth
       currentWindowHeight = getCollapsedHeight()

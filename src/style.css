@@ -37,6 +37,10 @@ button {
   background: var(--shell-bg);
 }
 
+.shell.is-expanded {
+  --wails-draggable: no-drag;
+}
+
 .shell::before {
   content: "";
   position: absolute;
