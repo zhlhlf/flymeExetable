@@ -31,10 +31,12 @@ button {
   width: 100vw;
   height: 100vh;
   padding: 0;
-  border-radius: 32px;
+  border-radius: 25px;
   overflow: hidden;
   --wails-draggable: drag;
-  background: var(--shell-bg);
+  background:
+    radial-gradient(circle at 82% 108%, rgba(255, 138, 0, .10), transparent 42%),
+    linear-gradient(168deg, rgba(14, 11, 8, .34), rgba(14, 11, 8, .16) 52%, rgba(8, 6, 4, .10));
 }
 
 .shell.is-expanded {
@@ -55,7 +57,7 @@ button {
   position: relative;
   z-index: 1;
   border: 1px solid rgba(255, 183, 93, .28);
-  border-radius: 34px;
+  border-radius: 25px;
   background: var(--card-bg);
   box-shadow: 0 18px 44px rgba(0, 0, 0, .26), inset 0 1px 0 rgba(255,255,255,.18);
 }
@@ -137,7 +139,7 @@ button:disabled {
 .setup.glass-card {
   position: relative;
   border: 1px solid rgba(255, 183, 93, .26);
-  border-radius: 34px;
+  border-radius: 25px;
   background:
     radial-gradient(circle at 18% 8%, rgba(255, 184, 106, .18), transparent 34%),
     radial-gradient(circle at 86% 12%, rgba(255, 138, 0, .16), transparent 32%),

@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 	"path/filepath"
+	"runtime"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -20,7 +21,14 @@ const (
 	setupWindowHeight     = 500
 )
 
+// 与 windowshape_windows.go 中 FindWindowW 使用的类名保持一致。
+const wailsWindowClass = "jczhlFilymeWindow"
+
 func main() {
+	if runtime.GOOS == "windows" {
+		go watchWindowShape()
+	}
+
 	lock, ok, err := acquireSingleInstanceLock()
 	if err != nil {
 		println("Error:", err.Error())
@@ -57,6 +65,7 @@ func main() {
 			Assets: assets,
 		},
 		Windows: &windows.Options{
+			WindowClassName:                   wailsWindowClass,
 			WebviewIsTransparent:              true,
 			WindowIsTranslucent:               true,
 			BackdropType:                      windows.None,
