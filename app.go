@@ -1197,6 +1197,20 @@ func (a *App) GetTypeIcons(exts []string) (map[string]string, error) {
 	return result, nil
 }
 
+func (a *App) ResortItemsByUsage(items []LauncherItem) ([]LauncherItem, error) {
+	items = applyUsageScores(items)
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].Letter == items[j].Letter {
+			if items[i].Score != items[j].Score {
+				return items[i].Score > items[j].Score
+			}
+			return strings.ToLower(items[i].Name) < strings.ToLower(items[j].Name)
+		}
+		return items[i].Letter < items[j].Letter
+	})
+	return items, nil
+}
+
 func (a *App) OpenItem(path string) error {
 	if runtime.GOOS != "windows" {
 		return errors.New("only windows is supported")

@@ -38,6 +38,10 @@ export function OpenItem(arg1) {
   return window['go']['main']['App']['OpenItem'](arg1);
 }
 
+export function ResortItemsByUsage(arg1) {
+  return window['go']['main']['App']['ResortItemsByUsage'](arg1);
+}
+
 export function OpenItemLocation(arg1) {
   return window['go']['main']['App']['OpenItemLocation'](arg1);
 }

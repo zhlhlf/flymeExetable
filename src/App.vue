@@ -1,7 +1,7 @@
 ﻿<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Quit, ScreenGetAll, WindowGetPosition, WindowSetPosition, WindowSetSize } from '../wailsjs/runtime/runtime'
-import { ChooseFolder, GetCachedItems, GetConfig, GetIcons, GetTypeIcons, OpenItem, OpenItemLocation, SaveWindowPosition, ScanFolders, SetSettings } from '../wailsjs/go/main/App'
+import { ChooseFolder, GetCachedItems, GetConfig, GetIcons, GetTypeIcons, OpenItem, OpenItemLocation, ResortItemsByUsage, SaveWindowPosition, ScanFolders, SetSettings } from '../wailsjs/go/main/App'
 import appIcon from '../appicon-rounded.png'
 
 type AppConfig = {
@@ -21,7 +21,7 @@ type LauncherItem = {
   extension: string
   isDir: boolean
   icon: string
-  score?: number
+  score: number
 }
 
 const letters = ['#', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')]
@@ -44,6 +44,7 @@ const dockFocused = ref(false)
 const choosingFolder = ref(false)
 let collapseTimer = 0
 let savePositionTimer = 0
+let usageRefreshTimer = 0
 let collapsedPosition: { x: number, y: number } | null = null
 let expanding = false
 let collapseToken = 0
@@ -448,6 +449,23 @@ async function loadActiveIcons() {
 
 async function openItem(item: LauncherItem) {
   await OpenItem(item.path)
+  scheduleUsageRefresh()
+}
+
+function scheduleUsageRefresh() {
+  if (usageRefreshTimer) return
+  usageRefreshTimer = window.setTimeout(async () => {
+    usageRefreshTimer = 0
+    if (expanded.value) return
+    try {
+      const sorted = await ResortItemsByUsage(items.value)
+      if (itemsFingerprint(sorted) !== itemsFingerprint(items.value)) {
+        applyItems(sorted, true)
+      }
+    } catch (err) {
+      console.error(err)
+    }
+  }, 2000)
 }
 
 async function revealItem(item: LauncherItem, event?: MouseEvent) {

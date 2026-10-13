@@ -20,6 +20,8 @@ export function HideWindow():Promise<void>;
 
 export function OpenItem(arg1:string):Promise<void>;
 
+export function ResortItemsByUsage(arg1:Array<main.LauncherItem>):Promise<Array<main.LauncherItem>>;
+
 export function OpenItemLocation(arg1:string):Promise<void>;
 
 export function SaveWindowPosition(arg1:number,arg2:number):Promise<void>;
