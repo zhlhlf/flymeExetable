@@ -289,7 +289,7 @@ async function bootstrapItems() {
 }
 
 function itemsFingerprint(list: LauncherItem[]) {
-  return list.map((item) => item.path + '|' + item.name + '|' + item.letter + '|' + (item.isDir ? '1' : '0') + '|' + item.extension).join('\n')
+  return list.map((item) => item.path).join('\n')
 }
 
 async function refresh() {
