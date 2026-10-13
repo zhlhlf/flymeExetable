@@ -21,6 +21,7 @@ type LauncherItem = {
   extension: string
   isDir: boolean
   icon: string
+  score?: number
 }
 
 const letters = ['#', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')]

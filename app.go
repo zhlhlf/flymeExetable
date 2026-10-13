@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"image"
 	"image/png"
+	"math"
 	"os"
+	"time"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -40,12 +42,13 @@ type WindowPosition struct {
 }
 
 type LauncherItem struct {
-	Name      string `json:"name"`
-	Path      string `json:"path"`
-	Letter    string `json:"letter"`
-	Extension string `json:"extension"`
-	IsDir     bool   `json:"isDir"`
-	Icon      string `json:"icon"`
+	Name      string  `json:"name"`
+	Path      string  `json:"path"`
+	Letter    string  `json:"letter"`
+	Extension string  `json:"extension"`
+	IsDir     bool    `json:"isDir"`
+	Icon      string  `json:"icon"`
+	Score     float64 `json:"score"`
 }
 
 type itemsCacheFile struct {
@@ -54,10 +57,21 @@ type itemsCacheFile struct {
 	Items   []LauncherItem `json:"items"`
 }
 
+type AppUsage struct {
+	Count    int   `json:"count"`
+	LastUsed int64 `json:"lastUsed"`
+}
+
+type UsageData struct {
+	Version int                 `json:"version"`
+	Stats   map[string]AppUsage `json:"stats"`
+}
+
 var (
 	iconDataURLCache     sync.Map
 	typeIconDataURLCache sync.Map
 	iconExtractLocks     sync.Map
+	usageMu              sync.Mutex
 )
 
 func iconExtractLock(key string) *sync.Mutex {
@@ -100,6 +114,14 @@ func itemsCachePath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, "items.json"), nil
+}
+
+func usagePath() (string, error) {
+	dir, err := storeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "usage.json"), nil
 }
 
 func iconsDir() (string, error) {
@@ -182,7 +204,7 @@ func writeItemsCache(folders []string, items []LauncherItem) {
 		return
 	}
 	payload := itemsCacheFile{
-		Version: 2,
+		Version: 3,
 		Folders: append([]string(nil), folders...),
 		Items:   items,
 	}
@@ -217,6 +239,104 @@ func readItemsCache() (itemsCacheFile, error) {
 		legacy[i].Icon = ""
 	}
 	return itemsCacheFile{Version: 1, Items: legacy}, nil
+}
+
+func usageKey(path string) string {
+	return strings.ToLower(filepath.Clean(strings.TrimSpace(path)))
+}
+
+func readUsage() (UsageData, error) {
+	path, err := usagePath()
+	if err != nil {
+		return UsageData{Version: 1, Stats: make(map[string]AppUsage)}, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return UsageData{Version: 1, Stats: make(map[string]AppUsage)}, nil
+		}
+		return UsageData{Version: 1, Stats: make(map[string]AppUsage)}, err
+	}
+
+	var typed UsageData
+	if err := json.Unmarshal(data, &typed); err == nil && typed.Version > 0 {
+		if typed.Stats == nil {
+			typed.Stats = make(map[string]AppUsage)
+		}
+		return typed, nil
+	}
+
+	var legacy map[string]AppUsage
+	if err := json.Unmarshal(data, &legacy); err == nil {
+		return UsageData{Version: 1, Stats: legacy}, nil
+	}
+	return UsageData{Version: 1, Stats: make(map[string]AppUsage)}, nil
+}
+
+func writeUsage(data UsageData) error {
+	path, err := usagePath()
+	if err != nil {
+		return err
+	}
+	if data.Stats == nil {
+		data.Stats = make(map[string]AppUsage)
+	}
+	data.Version = 1
+	payload, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	_ = os.Remove(tmp)
+	if err := os.WriteFile(tmp, payload, 0644); err != nil {
+		return err
+	}
+	_ = os.Remove(path)
+	return os.Rename(tmp, path)
+}
+
+func usageScore(u AppUsage, now int64) float64 {
+	const countWeight = 1.0
+	const recencyWeight = 10.0
+	daysAgo := float64(now-u.LastUsed) / (24.0 * 60.0 * 60.0 * 1000.0)
+	recency := recencyWeight * math.Exp(-daysAgo/7.0)
+	return float64(u.Count)*countWeight + recency
+}
+
+func applyUsageScores(items []LauncherItem) []LauncherItem {
+	usage, err := readUsage()
+	if err != nil {
+		usage = UsageData{Version: 1, Stats: make(map[string]AppUsage)}
+	}
+	now := time.Now().UnixMilli()
+	for i := range items {
+		key := usageKey(items[i].Path)
+		if u, ok := usage.Stats[key]; ok {
+			items[i].Score = usageScore(u, now)
+		}
+	}
+	return items
+}
+
+func recordUsage(path string) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return
+	}
+	key := usageKey(path)
+
+	usageMu.Lock()
+	defer usageMu.Unlock()
+
+	usage, err := readUsage()
+	if err != nil {
+		usage = UsageData{Version: 1, Stats: make(map[string]AppUsage)}
+	}
+	u := usage.Stats[key]
+	u.Count++
+	u.LastUsed = time.Now().UnixMilli()
+	usage.Stats[key] = u
+	_ = writeUsage(usage)
 }
 
 func foldersMatch(a, b []string) bool {
@@ -357,8 +477,12 @@ func scanFolder(folder string) ([]LauncherItem, error) {
 		}
 	}
 
+	items = applyUsageScores(items)
 	sort.SliceStable(items, func(i, j int) bool {
 		if items[i].Letter == items[j].Letter {
+			if items[i].Score != items[j].Score {
+				return items[i].Score > items[j].Score
+			}
 			return strings.ToLower(items[i].Name) < strings.ToLower(items[j].Name)
 		}
 		return items[i].Letter < items[j].Letter
@@ -427,8 +551,12 @@ func scanFolders(folders []string) ([]LauncherItem, error) {
 		}
 	}
 
+	allItems = applyUsageScores(allItems)
 	sort.SliceStable(allItems, func(i, j int) bool {
 		if allItems[i].Letter == allItems[j].Letter {
+			if allItems[i].Score != allItems[j].Score {
+				return allItems[i].Score > allItems[j].Score
+			}
 			return strings.ToLower(allItems[i].Name) < strings.ToLower(allItems[j].Name)
 		}
 		return allItems[i].Letter < allItems[j].Letter
@@ -919,7 +1047,17 @@ func (a *App) GetCachedItems(folders []string) ([]LauncherItem, error) {
 	if cache.Items == nil {
 		return []LauncherItem{}, nil
 	}
-	return cache.Items, nil
+	items := applyUsageScores(cache.Items)
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].Letter == items[j].Letter {
+			if items[i].Score != items[j].Score {
+				return items[i].Score > items[j].Score
+			}
+			return strings.ToLower(items[i].Name) < strings.ToLower(items[j].Name)
+		}
+		return items[i].Letter < items[j].Letter
+	})
+	return items, nil
 }
 
 func (a *App) ScanFolders(folders []string) ([]LauncherItem, error) {
@@ -1063,7 +1201,11 @@ func (a *App) OpenItem(path string) error {
 	if runtime.GOOS != "windows" {
 		return errors.New("only windows is supported")
 	}
-	return shellOpenWindows(path)
+	err := shellOpenWindows(path)
+	if err == nil {
+		go recordUsage(path)
+	}
+	return err
 }
 
 // OpenItemLocation opens File Explorer and selects the given file or folder.

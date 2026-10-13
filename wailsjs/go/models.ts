@@ -57,6 +57,7 @@ export namespace main {
 	    extension: string;
 	    isDir: boolean;
 	    icon: string;
+	    score: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new LauncherItem(source);
@@ -70,6 +71,7 @@ export namespace main {
 	        this.extension = source["extension"];
 	        this.isDir = source["isDir"];
 	        this.icon = source["icon"];
+	        this.score = source["score"];
 	    }
 	}
 
