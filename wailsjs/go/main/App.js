@@ -34,6 +34,10 @@ export function HideWindow() {
   return window['go']['main']['App']['HideWindow']();
 }
 
+export function NormalizeWindowPosition(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['NormalizeWindowPosition'](arg1, arg2, arg3, arg4);
+}
+
 export function OpenItem(arg1) {
   return window['go']['main']['App']['OpenItem'](arg1);
 }

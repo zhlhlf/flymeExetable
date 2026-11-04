@@ -1,7 +1,7 @@
 ﻿<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Quit, ScreenGetAll, WindowGetPosition, WindowSetPosition, WindowSetSize } from '../wailsjs/runtime/runtime'
-import { ChooseFolder, GetCachedItems, GetConfig, GetIcons, GetTypeIcons, OpenItem, OpenItemLocation, ResortItemsByUsage, SaveWindowPosition, ScanFolders, SetSettings } from '../wailsjs/go/main/App'
+import { ChooseFolder, GetCachedItems, GetConfig, GetIcons, GetTypeIcons, NormalizeWindowPosition, OpenItem, OpenItemLocation, ResortItemsByUsage, SaveWindowPosition, ScanFolders, SetSettings } from '../wailsjs/go/main/App'
 import appIcon from '../appicon-rounded.png'
 
 type AppConfig = {
@@ -145,9 +145,11 @@ const sidePoemLines = computed(() => {
 onMounted(async () => {
   try {
     const config = await GetConfig() as AppConfig
-    const initialPosition = config.windowPosition ?? await WindowGetPosition()
+    const rawPosition = config.windowPosition ?? await WindowGetPosition()
+    const initialPosition = await NormalizeWindowPosition(rawPosition.x, rawPosition.y, collapsedWidth, 120)
+    const positionCorrected = initialPosition.x !== rawPosition.x || initialPosition.y !== rawPosition.y
     collapsedPosition = { x: initialPosition.x, y: initialPosition.y }
-    lastSavedPosition = config.windowPosition ? positionKey(collapsedPosition) : ''
+    lastSavedPosition = config.windowPosition && !positionCorrected ? positionKey(collapsedPosition) : ''
     poem.value = config.poem?.trim() || defaultPoem
     folders.value = normalizeFolderList(config.folders?.length ? config.folders : (config.folder ? [config.folder] : []))
     settingsFolders.value = [...folders.value]

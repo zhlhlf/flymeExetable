@@ -18,6 +18,8 @@ export function GetTypeIcons(arg1:Array<string>):Promise<Record<string, string>>
 
 export function HideWindow():Promise<void>;
 
+export function NormalizeWindowPosition(arg1:number,arg2:number,arg3:number,arg4:number):Promise<main.WindowBounds>;
+
 export function OpenItem(arg1:string):Promise<void>;
 
 export function OpenItemLocation(arg1:string):Promise<void>;

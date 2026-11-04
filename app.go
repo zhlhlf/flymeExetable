@@ -787,9 +787,11 @@ var (
 	procDeleteObject       = gdi32.NewProc("DeleteObject")
 	procDeleteDC           = gdi32.NewProc("DeleteDC")
 
-	user32            = syscall.NewLazyDLL("user32.dll")
-	procDrawIconEx    = user32.NewProc("DrawIconEx")
-	procDestroyIcon   = user32.NewProc("DestroyIcon")
+	user32              = syscall.NewLazyDLL("user32.dll")
+	procDrawIconEx      = user32.NewProc("DrawIconEx")
+	procDestroyIcon     = user32.NewProc("DestroyIcon")
+	procMonitorFromRect = user32.NewProc("MonitorFromRect")
+	procGetMonitorInfoW = user32.NewProc("GetMonitorInfoW")
 )
 
 func extractWindowsIcon(sourcePath string, outputPath string) error {
@@ -966,6 +968,84 @@ func destroyIcon(hIcon uintptr) {
 		return
 	}
 	procDestroyIcon.Call(hIcon)
+}
+
+type winRect struct {
+	Left   int32
+	Top    int32
+	Right  int32
+	Bottom int32
+}
+
+type winMonitorInfo struct {
+	Size    uint32
+	Monitor winRect
+	Work    winRect
+	Flags   uint32
+}
+
+const (
+	monitorDefaultToNull    = 0
+	monitorDefaultToNearest = 2
+)
+
+type WindowBounds struct {
+	X      int `json:"x"`
+	Y      int `json:"y"`
+	Width  int `json:"width"`
+	Height int `json:"height"`
+}
+
+// NormalizeWindowPosition keeps the launcher visible when a saved position
+// falls outside every monitor, for example after unplugging a display.
+func (a *App) NormalizeWindowPosition(x int, y int, width int, height int) (WindowBounds, error) {
+	if width <= 0 {
+		width = 58
+	}
+	if height <= 0 {
+		height = 120
+	}
+	result := WindowBounds{X: x, Y: y, Width: width, Height: height}
+	if runtime.GOOS != "windows" {
+		return result, nil
+	}
+
+	rect := winRect{
+		Left:   int32(x),
+		Top:    int32(y),
+		Right:  int32(x + width),
+		Bottom: int32(y + height),
+	}
+	hmon, _, _ := procMonitorFromRect.Call(uintptr(unsafe.Pointer(&rect)), monitorDefaultToNull)
+	if hmon == 0 {
+		hmon, _, _ = procMonitorFromRect.Call(uintptr(unsafe.Pointer(&rect)), monitorDefaultToNearest)
+	}
+
+	var info winMonitorInfo
+	info.Size = uint32(unsafe.Sizeof(info))
+	if ret, _, _ := procGetMonitorInfoW.Call(hmon, uintptr(unsafe.Pointer(&info))); ret == 0 {
+		return result, nil
+	}
+
+	work := info.Work
+	left, top := int(work.Left), int(work.Top)
+	right, bottom := int(work.Right), int(work.Bottom)
+	if x >= left && y >= top && x+width <= right && y+height <= bottom {
+		return result, nil
+	}
+
+	// Snap to the right edge of the monitor work area and center vertically.
+	newX := right - width
+	if newX < left {
+		newX = left
+	}
+	newY := top + (bottom-top-height)/2
+	if newY < top {
+		newY = top
+	}
+	result.X = newX
+	result.Y = newY
+	return result, nil
 }
 
 func (a *App) GetConfig() (AppConfig, error) {
