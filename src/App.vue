@@ -46,6 +46,7 @@ const dockedMode = ref(false)
 let collapseTimer = 0
 let savePositionTimer = 0
 let usageRefreshTimer = 0
+let dockHoverCooldown = 0
 let collapsedPosition: { x: number, y: number } | null = null
 let expanding = false
 let collapseToken = 0
@@ -63,7 +64,8 @@ const flyPanelHeight = 318
 const dockTop = 8
 const dockControlsHeight = 64
 const letterHeight = 20
-const dockBallSize = 72
+const dockBallSize = 60
+const dockInset = 8
 const dockTriggerY = 6
 const flyPanelOffsetY = 26
 const flyPanelBottomGap = 18
@@ -227,6 +229,8 @@ function startPositionRecorder() {
         position = enterDockMode(position)
       } else if (dockedMode.value && position.y > dockTriggerY + 8) {
         position = exitDockMode(position)
+      } else if (dockedMode.value) {
+        position = { x: position.x, y: 0 }
       }
       await saveCollapsedPosition(position)
     } catch {
@@ -562,7 +566,7 @@ function enterDockMode(position: { x: number, y: number }) {
   currentExpandedWidth = dockBallSize
   currentWindowHeight = dockBallSize
   WindowSetSize(dockBallSize, dockBallSize)
-  WindowSetPosition(x, 0)
+  WindowSetPosition(x, dockInset)
   return { x, y: 0 }
 }
 
@@ -580,8 +584,15 @@ function exitDockMode(position: { x: number, y: number }) {
   return { x, y: position.y }
 }
 
+async function leaveDockMode() {
+  const position = await WindowGetPosition()
+  const next = exitDockMode(position)
+  await saveCollapsedPosition(next)
+}
+
 async function expandFromDock() {
   cancelCollapse()
+  if (Date.now() < dockHoverCooldown) return
   if (expanding) return
   expanding = true
   try {
@@ -591,7 +602,7 @@ async function expandFromDock() {
     const rightEdge = position.x + dockBallSize
     const expandedX = Math.max(0, rightEdge - width)
     WindowSetSize(width, height)
-    WindowSetPosition(expandedX, 0)
+    WindowSetPosition(expandedX, dockInset)
     currentExpandedWidth = width
     currentWindowHeight = height
     expanded.value = true
@@ -659,11 +670,12 @@ function scheduleCollapse() {
       if (token !== collapseToken || !expanded.value) return
       if (dockedMode.value) {
         WindowSetSize(dockBallSize, dockBallSize)
-        WindowSetPosition(anchor.x, 0)
+        WindowSetPosition(anchor.x, dockInset)
         expanded.value = false
         currentExpandedWidth = dockBallSize
         currentWindowHeight = dockBallSize
         collapsedPosition = { x: anchor.x, y: 0 }
+        dockHoverCooldown = Date.now() + 600
         changeGradientTheme()
         await saveCollapsedPosition(collapsedPosition)
         return
@@ -743,10 +755,8 @@ function quitApp() {
     </section>
 
     <template v-else>
-      <button v-if="dockedMode && !expanded" class="dock-ball" title="展开字母表">
-        <span class="dock-ball-hit" @click="expandFromDock">
-          <img :src="appIcon" alt="jczhl Flyme Launcher" />
-        </span>
+      <button v-if="dockedMode && !expanded" class="dock-ball" title="悬停展开 · 右键恢复窄条" @mouseenter="expandFromDock" @contextmenu.prevent="leaveDockMode">
+        <img :src="appIcon" alt="jczhl Flyme Launcher" />
       </button>
       <template v-else>
       <aside class="alphabet-dock" aria-label="字母表" @mouseenter="cancelCollapse">
