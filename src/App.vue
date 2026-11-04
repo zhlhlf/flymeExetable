@@ -42,6 +42,7 @@ const activeY = ref(Math.round(window.innerHeight / 2))
 const expanded = ref(false)
 const dockFocused = ref(false)
 const choosingFolder = ref(false)
+const dockedMode = ref(false)
 let collapseTimer = 0
 let savePositionTimer = 0
 let usageRefreshTimer = 0
@@ -62,6 +63,8 @@ const flyPanelHeight = 318
 const dockTop = 8
 const dockControlsHeight = 64
 const letterHeight = 20
+const dockBallSize = 72
+const dockTriggerY = 6
 const flyPanelOffsetY = 26
 const flyPanelBottomGap = 18
 let currentExpandedWidth = collapsedWidth
@@ -155,9 +158,13 @@ onMounted(async () => {
     settingsFolders.value = [...folders.value]
     settingsPoem.value = poem.value
     if (folders.value.length > 0) {
-      currentWindowHeight = getCollapsedHeight()
-      WindowSetSize(collapsedWidth, currentWindowHeight)
-      WindowSetPosition(collapsedPosition.x, collapsedPosition.y)
+      if (collapsedPosition.y <= dockTriggerY) {
+        enterDockMode(collapsedPosition)
+      } else {
+        currentWindowHeight = getCollapsedHeight()
+        WindowSetSize(collapsedWidth, currentWindowHeight)
+        WindowSetPosition(collapsedPosition.x, collapsedPosition.y)
+      }
       startPositionRecorder()
       booting.value = false
       await bootstrapItems()
@@ -214,8 +221,13 @@ function startPositionRecorder() {
   savePositionTimer = window.setInterval(async () => {
     if (expanded.value || showSettings.value || choosingFolder.value) return
     try {
-      const position = await WindowGetPosition()
+      let position = await WindowGetPosition()
       if (expanded.value || showSettings.value || choosingFolder.value) return
+      if (!dockedMode.value && position.y <= dockTriggerY) {
+        position = enterDockMode(position)
+      } else if (dockedMode.value && position.y > dockTriggerY + 8) {
+        position = exitDockMode(position)
+      }
       await saveCollapsedPosition(position)
     } catch {
       // Ignore position polling failures.
@@ -253,7 +265,7 @@ function applyItems(nextItems: LauncherItem[], preferKeepLetter = true) {
   } else {
     activeLetter.value = available[0] ?? 'A'
   }
-  if (!expanded.value) {
+  if (!expanded.value && !dockedMode.value) {
     currentWindowHeight = getCollapsedHeight()
     WindowSetSize(collapsedWidth, currentWindowHeight)
   }
@@ -541,6 +553,54 @@ async function openSetupWindow(center = false) {
   expanded.value = true
 }
 
+function enterDockMode(position: { x: number, y: number }) {
+  const centerX = position.x + collapsedWidth / 2
+  const screenWidth = window.screen.availWidth || 1920
+  const x = Math.max(0, Math.min(Math.round(centerX - dockBallSize / 2), screenWidth - dockBallSize))
+  dockedMode.value = true
+  collapsedPosition = { x, y: 0 }
+  currentExpandedWidth = dockBallSize
+  currentWindowHeight = dockBallSize
+  WindowSetSize(dockBallSize, dockBallSize)
+  WindowSetPosition(x, 0)
+  return { x, y: 0 }
+}
+
+function exitDockMode(position: { x: number, y: number }) {
+  const centerX = position.x + dockBallSize / 2
+  const screenWidth = window.screen.availWidth || 1920
+  const x = Math.max(0, Math.min(Math.round(centerX - collapsedWidth / 2), screenWidth - collapsedWidth))
+  const height = getCollapsedHeight()
+  dockedMode.value = false
+  collapsedPosition = { x, y: position.y }
+  currentExpandedWidth = collapsedWidth
+  currentWindowHeight = height
+  WindowSetSize(collapsedWidth, height)
+  WindowSetPosition(x, position.y)
+  return { x, y: position.y }
+}
+
+async function expandFromDock() {
+  cancelCollapse()
+  if (expanding) return
+  expanding = true
+  try {
+    const position = await WindowGetPosition()
+    const width = expandedWidth
+    const height = getExpandedHeight()
+    const rightEdge = position.x + dockBallSize
+    const expandedX = Math.max(0, rightEdge - width)
+    WindowSetSize(width, height)
+    WindowSetPosition(expandedX, 0)
+    currentExpandedWidth = width
+    currentWindowHeight = height
+    expanded.value = true
+    changeGradientTheme()
+  } finally {
+    expanding = false
+  }
+}
+
 function clearCollapseTimer() {
   if (collapseTimer) {
     window.clearTimeout(collapseTimer)
@@ -597,6 +657,17 @@ function scheduleCollapse() {
     try {
       const anchor = collapsedPosition ?? await WindowGetPosition()
       if (token !== collapseToken || !expanded.value) return
+      if (dockedMode.value) {
+        WindowSetSize(dockBallSize, dockBallSize)
+        WindowSetPosition(anchor.x, 0)
+        expanded.value = false
+        currentExpandedWidth = dockBallSize
+        currentWindowHeight = dockBallSize
+        collapsedPosition = { x: anchor.x, y: 0 }
+        changeGradientTheme()
+        await saveCollapsedPosition(collapsedPosition)
+        return
+      }
       const collapsedHeight = getCollapsedHeight()
       const rightEdge = anchor.x + collapsedWidth
       WindowSetSize(collapsedWidth, collapsedHeight)
@@ -639,9 +710,9 @@ function quitApp() {
 </script>
 
 <template>
-  <main class="shell" :class="{ 'is-expanded': expanded }" :style="shellStyle" @mouseenter="cancelCollapse" @mouseleave="scheduleCollapse">
-    <div v-if="!expanded && hasFolders" class="side-poem side-poem-left-primary">{{ sidePoemLines[0] }}</div>
-    <div v-if="!expanded && hasFolders && sidePoemLines[1]" class="side-poem side-poem-left-secondary">{{ sidePoemLines[1] }}</div>
+  <main class="shell" :class="{ 'is-expanded': expanded, 'is-docked': dockedMode && !expanded }" :style="shellStyle" @mouseenter="cancelCollapse" @mouseleave="scheduleCollapse">
+    <div v-if="!expanded && !dockedMode && hasFolders" class="side-poem side-poem-left-primary">{{ sidePoemLines[0] }}</div>
+    <div v-if="!expanded && !dockedMode && hasFolders && sidePoemLines[1]" class="side-poem side-poem-left-secondary">{{ sidePoemLines[1] }}</div>
 
     <section v-if="booting" class="empty glass-card booting">正在读取本地配置...</section>
 
@@ -672,6 +743,12 @@ function quitApp() {
     </section>
 
     <template v-else>
+      <button v-if="dockedMode && !expanded" class="dock-ball" title="展开字母表">
+        <span class="dock-ball-hit" @click="expandFromDock">
+          <img :src="appIcon" alt="jczhl Flyme Launcher" />
+        </span>
+      </button>
+      <template v-else>
       <aside class="alphabet-dock" aria-label="字母表" @mouseenter="cancelCollapse">
         <button class="settings-dot" title="设置" @click="openSettings">⚙</button>
         <button class="refresh-dot" :disabled="loading" title="刷新" @click="refresh">↻</button>
@@ -712,6 +789,7 @@ function quitApp() {
         <div class="footer-name">zhlhlf</div>
         <button class="footer-poem" title="退出应用" @click="quitApp">{{ poem }}</button>
       </div>
+      </template>
     </template>
   </main>
 </template>
