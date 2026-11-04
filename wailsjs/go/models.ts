@@ -1,23 +1,4 @@
 export namespace main {
-
-	export class WindowBounds {
-	    x: number;
-	    y: number;
-	    width: number;
-	    height: number;
-
-	    static createFrom(source: any = {}) {
-	        return new WindowBounds(source);
-	    }
-
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.x = source["x"];
-	        this.y = source["y"];
-	        this.width = source["width"];
-	        this.height = source["height"];
-	    }
-	}
 	
 	export class WindowPosition {
 	    x: number;
@@ -91,6 +72,24 @@ export namespace main {
 	        this.isDir = source["isDir"];
 	        this.icon = source["icon"];
 	        this.score = source["score"];
+	    }
+	}
+	export class WindowBounds {
+	    x: number;
+	    y: number;
+	    width: number;
+	    height: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new WindowBounds(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.x = source["x"];
+	        this.y = source["y"];
+	        this.width = source["width"];
+	        this.height = source["height"];
 	    }
 	}
 
